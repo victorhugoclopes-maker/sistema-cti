@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Vendas</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html" class="ativo">Vendas</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Nova Venda</h2>
+      <input type="hidden" id="vendaId">
+      <div class="form-grid">
+        <div><label>Nº da Venda</label><input id="numeroVenda"></div>
+        <div>
+          <label>Empresa emissora</label>
+          <select id="empresaSelect"><option value="">Selecione...</option></select>
+        </div>
+        <div>
+          <label>Cliente</label>
+          <select id="clienteSelect"><option value="">Selecione...</option></select>
+        </div>
+        <div><label>Data</label><input type="date" id="dataVenda"></div>
+        <div><label>Nº da Nota Fiscal (preencher depois de emitir no Sebrae)</label><input id="numeroNF" placeholder="Opcional"></div>
+      </div>
+
+      <label style="margin-top:8px;">Itens vendidos</label>
+      <table style="margin-bottom:10px;">
+        <thead><tr><th>Item</th><th style="width:90px;">Qtd</th><th style="width:110px;">Valor unit.</th><th style="width:40px;"></th></tr></thead>
+        <tbody id="tabelaItensVenda"></tbody>
+      </table>
+      <button type="button" class="secundario" onclick="adicionarLinhaItem()">+ Adicionar item</button>
+
+      <p style="margin-top:14px;font-weight:bold;font-size:16px;">Total: <span id="totalVenda">R$ 0,00</span></p>
+
+      <label>Observações</label>
+      <textarea id="observacoesVenda"></textarea>
+
+      <div class="acoes">
+        <button onclick="salvarVenda()">Salvar Venda</button>
+        <button class="secundario" onclick="limparFormVenda()">Limpar</button>
+      </div>
+    </div>
+
+    <div class="card" id="resumoNFCard" style="display:none;">
+      <h2>Resumo para emitir no Emissor do Sebrae</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;">Copie os dados abaixo e cole no site do Sebrae na hora de emitir a nota.</p>
+      <textarea id="resumoNFTexto" style="min-height:200px;font-family:monospace;" readonly></textarea>
+      <div class="acoes">
+        <button onclick="copiarResumo()">Copiar Resumo</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Vendas Registradas</h2>
+      <table>
+        <thead><tr><th>Nº Venda</th><th>Empresa</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Nº NF</th></tr></thead>
+        <tbody id="tabelaVendas"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+let clientesCacheVendas = [];
+let empresasCacheVendas = [];
+
+async function carregarEmpresasSelectVendas() {
+  const { data } = await supabaseClient.from('empresas').select('id, nome, cnpj').order('nome');
+  empresasCacheVendas = data || [];
+  const select = document.getElementById('empresaSelect');
+  select.innerHTML = '<option value="">Selecione...</option>' +
+    empresasCacheVendas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('');
+}
+
+async function carregarClientesSelectVendas() {
+  const { data } = await supabaseClient.from('clientes').select('id, nome').order('nome');
+  clientesCacheVendas = data || [];
+  const select = document.getElementById('clienteSelect');
+  select.innerHTML = '<option value="">Selecione...</option>' +
+    clientesCacheVendas.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+}
+
+function adicionarLinhaItem(nome = '', quantidade = 1, valorUnitario = 0) {
+  const tbody = document.getElementById('tabelaItensVenda');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="item-nome" value="${nome}" placeholder="Nome do item" style="margin-bottom:0;"></td>
+    <td><input type="number" class="item-qtd" value="${quantidade}" min="0.01" step="0.01" style="margin-bottom:0;" onchange="calcularTotalVenda()"></td>
+    <td><input type="number" class="item-valor" value="${valorUnitario}" min="0" step="0.01" style="margin-bottom:0;" onchange="calcularTotalVenda()"></td>
+    <td><button type="button" class="perigo" onclick="this.closest('tr').remove(); calcularTotalVenda();">X</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function coletarItensVenda() {
+  const linhas = document.querySelectorAll('#tabelaItensVenda tr');
+  const itens = [];
+  linhas.forEach(tr => {
+    const nome = tr.querySelector('.item-nome').value.trim();
+    const qtd = parseFloat(tr.querySelector('.item-qtd').value) || 0;
+    const valor = parseFloat(tr.querySelector('.item-valor').value) || 0;
+    if (nome && qtd > 0) itens.push({ nome, quantidade: qtd, valorUnitario: valor });
+  });
+  return itens;
+}
+
+function calcularTotalVenda() {
+  const itens = coletarItensVenda();
+  const total = itens.reduce((soma, i) => soma + (i.quantidade * i.valorUnitario), 0);
+  document.getElementById('totalVenda').textContent = 'R$ ' + total.toFixed(2).replace('.', ',');
+  return total;
+}
+
+async function encontrarPecaPorNomeVenda(nome) {
+  const { data } = await supabaseClient.from('pecas').select('*').ilike('nome', nome).limit(1);
+  return data && data.length ? data[0] : null;
+}
+
+async function salvarVenda() {
+  const id = document.getElementById('vendaId').value;
+  const itens = coletarItensVenda();
+  if (!document.getElementById('numeroVenda').value) { alert('Preencha o número da venda'); return; }
+  if (!document.getElementById('empresaSelect').value) { alert('Selecione a empresa emissora'); return; }
+  if (itens.length === 0) { alert('Adicione ao menos um item'); return; }
+
+  const total = calcularTotalVenda();
+  const clienteId = document.getElementById('clienteSelect').value || null;
+  const empresaId = document.getElementById('empresaSelect').value || null;
+  const registro = {
+    numero_venda: document.getElementById('numeroVenda').value,
+    cliente_id: clienteId,
+    empresa_id: empresaId,
+    data_venda: document.getElementById('dataVenda').value || new Date().toISOString().split('T')[0],
+    valor_total: total,
+    numero_nf: document.getElementById('numeroNF').value || null,
+    observacoes: document.getElementById('observacoesVenda').value,
+  };
+
+  let vendaIdFinal = id;
+  if (id) {
+    await supabaseClient.from('vendas').update(registro).eq('id', id);
+    await supabaseClient.from('vendas_itens').delete().eq('venda_id', id);
+  } else {
+    const { data: novaVenda } = await supabaseClient.from('vendas').insert(registro).select().single();
+    vendaIdFinal = novaVenda?.id;
+  }
+
+  for (const item of itens) {
+    const pecaCasada = await encontrarPecaPorNomeVenda(item.nome);
+    await supabaseClient.from('vendas_itens').insert({
+      venda_id: vendaIdFinal, peca_id: pecaCasada?.id || null,
+      nome_item: item.nome, quantidade: item.quantidade, valor_unitario: item.valorUnitario
+    });
+    // só desconta do estoque em venda NOVA, pra não descontar duas vezes numa edição
+    if (!id && pecaCasada) {
+      const novaQtd = (parseFloat(pecaCasada.quantidade) || 0) - item.quantidade;
+      await supabaseClient.from('pecas').update({ quantidade: novaQtd }).eq('id', pecaCasada.id);
+      await supabaseClient.from('movimentacoes_estoque').insert({
+        peca_id: pecaCasada.id, tipo: 'saida', quantidade: item.quantidade, motivo: `Venda ${registro.numero_venda}`
+      });
+    }
+  }
+
+  const nomeCliente = clientesCacheVendas.find(c => c.id === clienteId)?.nome || '-';
+  const empresa = empresasCacheVendas.find(e => e.id === empresaId);
+  exibirResumoNF(registro, itens, nomeCliente, total, empresa);
+
+  limparFormVenda();
+  carregarVendas();
+}
+
+function exibirResumoNF(registro, itens, nomeCliente, total, empresa) {
+  const linhas = [
+    `VENDA Nº ${registro.numero_venda}`,
+    `Empresa emissora: ${empresa?.nome || '-'}${empresa?.cnpj ? ' | CNPJ: ' + empresa.cnpj : ''}`,
+    `Cliente: ${nomeCliente}`,
+    `Data: ${formatarData(registro.data_venda)}`,
+    ``,
+    `ITENS:`,
+    ...itens.map(i => `- ${i.nome} | Qtd: ${i.quantidade} | Valor unit: R$ ${i.valorUnitario.toFixed(2)} | Subtotal: R$ ${(i.quantidade*i.valorUnitario).toFixed(2)}`),
+    ``,
+    `TOTAL: R$ ${total.toFixed(2)}`,
+  ];
+  document.getElementById('resumoNFCard').style.display = 'block';
+  document.getElementById('resumoNFTexto').value = linhas.join('\n');
+}
+
+function copiarResumo() {
+  const texto = document.getElementById('resumoNFTexto');
+  texto.select();
+  document.execCommand('copy');
+  alert('Resumo copiado! Agora é só colar no Emissor do Sebrae.');
+}
+
+async function carregarVendas() {
+  const { data } = await supabaseClient.from('vendas').select('*, clientes(nome), empresas(nome)').order('criado_em', { ascending: false });
+  const tbody = document.getElementById('tabelaVendas');
+  tbody.innerHTML = '';
+  (data || []).forEach(v => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${v.numero_venda}</td><td>${v.empresas?.nome || '-'}</td><td>${v.clientes?.nome || '-'}</td><td>${formatarData(v.data_venda)}</td>
+      <td>R$ ${Number(v.valor_total).toFixed(2)}</td><td>${v.numero_nf || '-'}</td>`;
+    tr.onclick = () => abrirVenda(v);
+    tbody.appendChild(tr);
+  });
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="vazio">Nenhuma venda registrada</td></tr>';
+  }
+}
+
+async function abrirVenda(v) {
+  document.getElementById('vendaId').value = v.id;
+  document.getElementById('numeroVenda').value = v.numero_venda || '';
+  document.getElementById('empresaSelect').value = v.empresa_id || '';
+  document.getElementById('clienteSelect').value = v.cliente_id || '';
+  document.getElementById('dataVenda').value = v.data_venda || '';
+  document.getElementById('numeroNF').value = v.numero_nf || '';
+  document.getElementById('observacoesVenda').value = v.observacoes || '';
+
+  const { data: itens } = await supabaseClient.from('vendas_itens').select('*').eq('venda_id', v.id);
+  document.getElementById('tabelaItensVenda').innerHTML = '';
+  (itens || []).forEach(i => adicionarLinhaItem(i.nome_item, i.quantidade, i.valor_unitario));
+  calcularTotalVenda();
+  window.scrollTo(0,0);
+}
+
+function limparFormVenda() {
+  document.getElementById('vendaId').value = '';
+  document.getElementById('numeroVenda').value = '';
+  document.getElementById('empresaSelect').value = '';
+  document.getElementById('clienteSelect').value = '';
+  document.getElementById('dataVenda').value = '';
+  document.getElementById('numeroNF').value = '';
+  document.getElementById('observacoesVenda').value = '';
+  document.getElementById('tabelaItensVenda').innerHTML = '';
+  document.getElementById('totalVenda').textContent = 'R$ 0,00';
+}
+
+(async () => {
+  await protegerPagina();
+  await carregarEmpresasSelectVendas();
+  await carregarClientesSelectVendas();
+  await carregarVendas();
+})();
+</script>
+</body>
+</html>

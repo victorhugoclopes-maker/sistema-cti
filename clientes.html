@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Clientes</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html" class="ativo">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Importar Clientes de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita arquivos .xlsx ou .csv. A primeira linha deve ter os nomes das colunas —
+        o sistema reconhece automaticamente colunas como <b>nome</b>, <b>empresa</b>, <b>telefone</b>, <b>endereço</b> e <b>observações</b> (não precisa ser exatamente nessa ordem).
+      </p>
+      <input type="file" id="planilhaInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilha()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportCard" style="display:none;">
+      <h2>Confirme os clientes encontrados</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImport"></p>
+      <table>
+        <thead><tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Endereço</th></tr></thead>
+        <tbody id="tabelaPreviewImport"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportClientes()">Importar todos</button>
+        <button class="secundario" onclick="document.getElementById('previewImportCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="tituloForm">Novo Cliente</h2>
+      <input type="hidden" id="clienteId">
+      <div class="form-grid">
+        <div><label>Nome</label><input id="nome"></div>
+        <div><label>Empresa</label><input id="empresa"></div>
+        <div><label>Telefone</label><input id="telefone"></div>
+        <div><label>Endereço</label><input id="endereco"></div>
+      </div>
+      <label>Observações</label>
+      <textarea id="observacoes"></textarea>
+      <div class="acoes">
+        <button onclick="salvarCliente()">Salvar</button>
+        <button class="secundario" onclick="limparForm()">Limpar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Clientes Cadastrados</h2>
+      <table>
+        <thead><tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Equipamentos</th></tr></thead>
+        <tbody id="tabelaClientes"></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="cardEquipamentos" style="display:none;">
+      <h2>Equipamentos de <span id="nomeClienteSelecionado"></span></h2>
+      <input type="hidden" id="equipamentoId">
+      <div class="form-grid">
+        <div><label>Tipo</label><input id="eqTipo" placeholder="Balança"></div>
+        <div><label>Marca</label><input id="eqMarca"></div>
+        <div><label>Modelo</label><input id="eqModelo"></div>
+        <div><label>Nº de Série</label><input id="eqSerie"></div>
+        <div><label>Capacidade</label><input id="eqCapacidade" placeholder="15kg"></div>
+        <div><label>Última Calibração</label><input type="date" id="eqUltimaCalib"></div>
+      </div>
+      <p style="font-size:12px;color:#6b7280;margin:-6px 0 10px;">A próxima revisão é calculada automaticamente (1 ano após a última calibração).</p>
+      <div class="acoes">
+        <button onclick="salvarEquipamento()">Adicionar Equipamento</button>
+      </div>
+      <table style="margin-top:16px;">
+        <thead><tr><th>Tipo</th><th>Marca/Modelo</th><th>Série</th><th>Próxima Revisão</th><th></th></tr></thead>
+        <tbody id="tabelaEquipamentos"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+let clientesParaImportar = [];
+
+// Mapeia possíveis nomes de coluna para o campo interno
+const MAPA_COLUNAS = {
+  nome: ['nome', 'cliente', 'razao social', 'razão social', 'nome do cliente'],
+  empresa: ['empresa', 'nome fantasia', 'fantasia'],
+  telefone: ['telefone', 'celular', 'contato', 'whatsapp', 'fone'],
+  endereco: ['endereco', 'endereço', 'address', 'local'],
+  observacoes: ['observacoes', 'observações', 'obs', 'notas'],
+};
+
+function identificarColuna(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  return null;
+}
+
+function processarPlanilha() {
+  const input = document.getElementById('planilhaInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+
+      if (linhas.length === 0) throw new Error('Planilha vazia');
+
+      // Descobre o mapeamento de colunas com base nos cabeçalhos da primeira linha
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapeamento = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColuna(cab);
+        if (campo) mapeamento[campo] = cab;
+      });
+
+      if (!mapeamento.nome) {
+        throw new Error('Não encontrei uma coluna de nome do cliente. Verifique se a primeira linha da planilha tem os títulos das colunas.');
+      }
+
+      clientesParaImportar = linhas
+        .map(linha => ({
+          nome: (linha[mapeamento.nome] || '').toString().trim(),
+          empresa: (linha[mapeamento.empresa] || '').toString().trim(),
+          telefone: (linha[mapeamento.telefone] || '').toString().trim(),
+          endereco: (linha[mapeamento.endereco] || '').toString().trim(),
+          observacoes: (linha[mapeamento.observacoes] || '').toString().trim(),
+        }))
+        .filter(c => c.nome);
+
+      exibirPreviewImport();
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImport() {
+  document.getElementById('previewImportCard').style.display = 'block';
+  document.getElementById('resumoImport').textContent = `${clientesParaImportar.length} cliente(s) encontrado(s) na planilha.`;
+  const tbody = document.getElementById('tabelaPreviewImport');
+  tbody.innerHTML = '';
+  clientesParaImportar.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${c.nome}</td><td>${c.empresa || '-'}</td><td>${c.telefone || '-'}</td><td>${c.endereco || '-'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function confirmarImportClientes() {
+  if (clientesParaImportar.length === 0) return;
+  const { error } = await supabaseClient.from('clientes').insert(clientesParaImportar);
+  if (error) {
+    alert('Erro ao importar: ' + error.message);
+    return;
+  }
+  alert(`${clientesParaImportar.length} cliente(s) importado(s) com sucesso!`);
+  document.getElementById('previewImportCard').style.display = 'none';
+  document.getElementById('planilhaInput').value = '';
+  clientesParaImportar = [];
+  carregarClientes();
+}
+
+let clienteAtualId = null;
+
+async function carregarClientes() {
+  const { data } = await supabaseClient.from('clientes').select('*, equipamentos(id)').order('nome');
+  const tbody = document.getElementById('tabelaClientes');
+  tbody.innerHTML = '';
+  (data || []).forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${c.nome}</td><td>${c.empresa || '-'}</td><td>${c.telefone || '-'}</td><td>${c.equipamentos?.length || 0}</td>`;
+    tr.onclick = () => abrirCliente(c);
+    tbody.appendChild(tr);
+  });
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhum cliente cadastrado</td></tr>';
+  }
+}
+
+function abrirCliente(c) {
+  document.getElementById('tituloForm').textContent = 'Editar Cliente';
+  document.getElementById('clienteId').value = c.id;
+  document.getElementById('nome').value = c.nome || '';
+  document.getElementById('empresa').value = c.empresa || '';
+  document.getElementById('telefone').value = c.telefone || '';
+  document.getElementById('endereco').value = c.endereco || '';
+  document.getElementById('observacoes').value = c.observacoes || '';
+
+  clienteAtualId = c.id;
+  document.getElementById('cardEquipamentos').style.display = 'block';
+  document.getElementById('nomeClienteSelecionado').textContent = c.nome;
+  carregarEquipamentos(c.id);
+  window.scrollTo(0,0);
+}
+
+async function salvarCliente() {
+  const id = document.getElementById('clienteId').value;
+  const registro = {
+    nome: document.getElementById('nome').value,
+    empresa: document.getElementById('empresa').value,
+    telefone: document.getElementById('telefone').value,
+    endereco: document.getElementById('endereco').value,
+    observacoes: document.getElementById('observacoes').value,
+  };
+  if (!registro.nome) { alert('Preencha o nome do cliente'); return; }
+
+  if (id) {
+    await supabaseClient.from('clientes').update(registro).eq('id', id);
+  } else {
+    await supabaseClient.from('clientes').insert(registro);
+  }
+  limparForm();
+  carregarClientes();
+}
+
+function limparForm() {
+  document.getElementById('tituloForm').textContent = 'Novo Cliente';
+  document.getElementById('clienteId').value = '';
+  ['nome','empresa','telefone','endereco','observacoes'].forEach(id => document.getElementById(id).value = '');
+}
+
+async function carregarEquipamentos(clienteId) {
+  const { data } = await supabaseClient.from('equipamentos').select('*').eq('cliente_id', clienteId).order('criado_em');
+  const tbody = document.getElementById('tabelaEquipamentos');
+  tbody.innerHTML = '';
+  const hoje = new Date();
+  (data || []).forEach(e => {
+    const vencida = e.proxima_calibracao && new Date(e.proxima_calibracao) < hoje;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${e.tipo || '-'}</td><td>${e.marca || ''} ${e.modelo || ''}</td><td>${e.numero_serie || '-'}</td>
+      <td>${e.proxima_calibracao ? formatarData(e.proxima_calibracao) : '-'}${vencida ? ' ⚠️' : ''}</td>
+      <td><button class="perigo" onclick="excluirEquipamento('${e.id}')">Excluir</button></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function salvarEquipamento() {
+  if (!clienteAtualId) return;
+  const ultimaCalib = document.getElementById('eqUltimaCalib').value || null;
+  let proximaCalib = null;
+  if (ultimaCalib) {
+    const data = new Date(ultimaCalib + 'T00:00:00');
+    data.setFullYear(data.getFullYear() + 1);
+    proximaCalib = data.toISOString().split('T')[0];
+  }
+  const registro = {
+    cliente_id: clienteAtualId,
+    tipo: document.getElementById('eqTipo').value,
+    marca: document.getElementById('eqMarca').value,
+    modelo: document.getElementById('eqModelo').value,
+    numero_serie: document.getElementById('eqSerie').value,
+    capacidade: document.getElementById('eqCapacidade').value,
+    ultima_calibracao: ultimaCalib,
+    proxima_calibracao: proximaCalib,
+  };
+  await supabaseClient.from('equipamentos').insert(registro);
+  ['eqTipo','eqMarca','eqModelo','eqSerie','eqCapacidade','eqUltimaCalib'].forEach(id => document.getElementById(id).value = '');
+  carregarEquipamentos(clienteAtualId);
+}
+
+async function excluirEquipamento(id) {
+  if (!confirm('Excluir este equipamento?')) return;
+  await supabaseClient.from('equipamentos').delete().eq('id', id);
+  carregarEquipamentos(clienteAtualId);
+}
+
+(async () => {
+  await protegerPagina();
+  carregarClientes();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Ordens de Serviço</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html" class="ativo">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2 id="tituloForm">Nova Ordem de Serviço</h2>
+      <input type="hidden" id="osId">
+      <div class="form-grid">
+        <div><label>Nº da OS</label><input id="numeroOS"></div>
+        <div><label>Orçamento (igual ao Nº OS)</label><input id="orcamento"></div>
+        <div>
+          <label>Cliente</label>
+          <select id="clienteSelect" onchange="carregarEquipamentosDoCliente()"><option value="">Selecione...</option></select>
+        </div>
+        <div>
+          <label>Equipamento</label>
+          <select id="equipamentoSelect"><option value="">Selecione o cliente primeiro</option></select>
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="status">
+            <option value="aberta">Aberta</option>
+            <option value="em_andamento">Em andamento</option>
+            <option value="concluida">Concluída</option>
+          </select>
+        </div>
+        <div><label>Valor</label><input id="valor" placeholder="R$"></div>
+      </div>
+      <label>Descrição do defeito</label>
+      <textarea id="descricaoDefeito"></textarea>
+      <label>Causa</label>
+      <input id="causa" placeholder="Ex: célula de carga, placa eletrônica, fonte, display...">
+      <label>Serviço realizado</label>
+      <textarea id="servicoRealizado"></textarea>
+
+      <label style="margin-top:8px;">Peças utilizadas</label>
+      <p style="font-size:12px;color:#6b7280;margin-bottom:8px;">
+        Digite o nome livremente. Se o nome bater com uma peça do estoque, o sistema desconta automaticamente ao salvar uma OS nova.
+      </p>
+      <table style="margin-bottom:10px;">
+        <thead><tr><th>Peça</th><th style="width:100px;">Qtd</th><th style="width:40px;"></th></tr></thead>
+        <tbody id="tabelaPecasUsadas"></tbody>
+      </table>
+      <button type="button" class="secundario" onclick="adicionarLinhaPeca()">+ Adicionar peça</button>
+
+      <div class="acoes" style="margin-top:16px;">
+        <button onclick="salvarOS()">Salvar</button>
+        <button class="secundario" onclick="limparForm()">Limpar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ordens de Serviço</h2>
+      <table>
+        <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Data</th></tr></thead>
+        <tbody id="tabelaOS"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+let clientesCache = [];
+let equipamentosCache = [];
+
+async function carregarClientesSelect() {
+  const { data } = await supabaseClient.from('clientes').select('id, nome').order('nome');
+  clientesCache = data || [];
+  const select = document.getElementById('clienteSelect');
+  select.innerHTML = '<option value="">Selecione...</option>' +
+    clientesCache.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+}
+
+async function carregarEquipamentosDoCliente() {
+  const clienteId = document.getElementById('clienteSelect').value;
+  const select = document.getElementById('equipamentoSelect');
+  if (!clienteId) {
+    select.innerHTML = '<option value="">Selecione o cliente primeiro</option>';
+    return;
+  }
+  const { data } = await supabaseClient.from('equipamentos').select('id, tipo, modelo, numero_serie').eq('cliente_id', clienteId);
+  equipamentosCache = data || [];
+  select.innerHTML = '<option value="">Selecione...</option>' +
+    equipamentosCache.map(e => `<option value="${e.id}">${e.tipo || ''} ${e.modelo || ''} (${e.numero_serie || 's/n'})</option>`).join('');
+}
+
+async function carregarOS() {
+  const { data } = await supabaseClient
+    .from('ordens_servico')
+    .select('*, clientes(nome)')
+    .order('criado_em', { ascending: false });
+  const tbody = document.getElementById('tabelaOS');
+  tbody.innerHTML = '';
+  (data || []).forEach(os => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.clientes?.nome || '-'}</td>
+      <td><span class="badge ${os.status}">${os.status.replace('_',' ')}</span></td>
+      <td>${formatarData(os.data_abertura)}</td>`;
+    tr.onclick = () => abrirOS(os);
+    tbody.appendChild(tr);
+  });
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhuma OS cadastrada</td></tr>';
+  }
+}
+
+async function abrirOS(os) {
+  document.getElementById('tituloForm').textContent = 'Editar OS';
+  document.getElementById('osId').value = os.id;
+  document.getElementById('numeroOS').value = os.numero_os || '';
+  document.getElementById('orcamento').value = os.orcamento || '';
+  document.getElementById('status').value = os.status || 'aberta';
+  document.getElementById('valor').value = os.valor || '';
+  document.getElementById('descricaoDefeito').value = os.descricao_defeito || '';
+  document.getElementById('causa').value = os.causa || '';
+  document.getElementById('servicoRealizado').value = os.servico_realizado || '';
+  document.getElementById('clienteSelect').value = os.cliente_id || '';
+  await carregarEquipamentosDoCliente();
+  document.getElementById('equipamentoSelect').value = os.equipamento_id || '';
+
+  const { data: pecasUsadas } = await supabaseClient.from('os_pecas').select('*').eq('os_id', os.id);
+  document.getElementById('tabelaPecasUsadas').innerHTML = '';
+  (pecasUsadas || []).forEach(p => adicionarLinhaPeca(p.nome_peca, p.quantidade));
+
+  window.scrollTo(0,0);
+}
+
+function adicionarLinhaPeca(nome = '', quantidade = 1) {
+  const tbody = document.getElementById('tabelaPecasUsadas');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="peca-nome" value="${nome}" placeholder="Nome da peça" style="margin-bottom:0;"></td>
+    <td><input type="number" class="peca-qtd" value="${quantidade}" min="0.01" step="0.01" style="margin-bottom:0;"></td>
+    <td><button type="button" class="perigo" onclick="this.closest('tr').remove()">X</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function coletarPecasDoFormulario() {
+  const linhas = document.querySelectorAll('#tabelaPecasUsadas tr');
+  const pecas = [];
+  linhas.forEach(tr => {
+    const nome = tr.querySelector('.peca-nome').value.trim();
+    const qtd = parseFloat(tr.querySelector('.peca-qtd').value) || 0;
+    if (nome && qtd > 0) pecas.push({ nome, quantidade: qtd });
+  });
+  return pecas;
+}
+
+async function salvarOS() {
+  const id = document.getElementById('osId').value;
+  const registro = {
+    numero_os: document.getElementById('numeroOS').value,
+    orcamento: document.getElementById('orcamento').value,
+    cliente_id: document.getElementById('clienteSelect').value || null,
+    equipamento_id: document.getElementById('equipamentoSelect').value || null,
+    status: document.getElementById('status').value,
+    valor: document.getElementById('valor').value,
+    descricao_defeito: document.getElementById('descricaoDefeito').value,
+    causa: document.getElementById('causa').value,
+    servico_realizado: document.getElementById('servicoRealizado').value,
+  };
+  if (!registro.numero_os) { alert('Preencha o número da OS'); return; }
+
+  const pecasInformadas = coletarPecasDoFormulario();
+  let osIdFinal = id;
+
+  if (id) {
+    // Edição: atualiza a OS e substitui a lista de peças, SEM mexer no estoque
+    // (evita descontar duas vezes o mesmo item)
+    await supabaseClient.from('ordens_servico').update(registro).eq('id', id);
+    await supabaseClient.from('os_pecas').delete().eq('os_id', id);
+    for (const p of pecasInformadas) {
+      const pecaCasada = await encontrarPecaPorNome(p.nome);
+      await supabaseClient.from('os_pecas').insert({
+        os_id: id, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade
+      });
+    }
+    if (pecasInformadas.length > 0) {
+      alert('OS atualizada. Obs: o estoque não é ajustado automaticamente ao editar peças de uma OS já salva — se precisar corrigir, ajuste manualmente na tela Estoque.');
+    }
+  } else {
+    // OS nova: cria, registra peças E desconta do estoque
+    const { data: novaOS } = await supabaseClient.from('ordens_servico').insert(registro).select().single();
+    osIdFinal = novaOS?.id;
+    for (const p of pecasInformadas) {
+      const pecaCasada = await encontrarPecaPorNome(p.nome);
+      await supabaseClient.from('os_pecas').insert({
+        os_id: osIdFinal, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade
+      });
+      if (pecaCasada) {
+        const novaQtd = (parseFloat(pecaCasada.quantidade) || 0) - p.quantidade;
+        await supabaseClient.from('pecas').update({ quantidade: novaQtd }).eq('id', pecaCasada.id);
+        await supabaseClient.from('movimentacoes_estoque').insert({
+          peca_id: pecaCasada.id, tipo: 'saida', quantidade: p.quantidade,
+          motivo: `OS ${registro.numero_os}`, os_id: osIdFinal
+        });
+      }
+    }
+  }
+  limparForm();
+  carregarOS();
+}
+
+// Busca peça no estoque pelo nome (comparação sem diferenciar maiúsculas/minúsculas)
+async function encontrarPecaPorNome(nome) {
+  const { data } = await supabaseClient.from('pecas').select('*').ilike('nome', nome).limit(1);
+  return data && data.length ? data[0] : null;
+}
+
+function limparForm() {
+  document.getElementById('tituloForm').textContent = 'Nova Ordem de Serviço';
+  document.getElementById('osId').value = '';
+  ['numeroOS','orcamento','valor','descricaoDefeito','servicoRealizado'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('status').value = 'aberta';
+  document.getElementById('causa').value = '';
+  document.getElementById('clienteSelect').value = '';
+  document.getElementById('equipamentoSelect').innerHTML = '<option value="">Selecione o cliente primeiro</option>';
+  document.getElementById('tabelaPecasUsadas').innerHTML = '';
+}
+
+// Orçamento acompanha automaticamente o número da OS
+document.getElementById('numeroOS').addEventListener('input', (e) => {
+  document.getElementById('orcamento').value = e.target.value;
+});
+
+(async () => {
+  await protegerPagina();
+  await carregarClientesSelect();
+  await carregarOS();
+})();
+</script>
+</body>
+</html>

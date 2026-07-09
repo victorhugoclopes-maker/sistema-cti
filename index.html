@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Login</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="login-box">
+    <h1>CTI Máquinas e Equipamentos</h1>
+    <div class="card">
+      <div id="erro" class="erro" style="display:none;"></div>
+      <label>E-mail</label>
+      <input type="email" id="email" placeholder="seu@email.com">
+      <label>Senha</label>
+      <input type="password" id="senha" placeholder="••••••••">
+      <button onclick="entrar()" style="width:100%;">Entrar</button>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+async function entrar() {
+  const email = document.getElementById('email').value;
+  const senha = document.getElementById('senha').value;
+  const erroDiv = document.getElementById('erro');
+  erroDiv.style.display = 'none';
+
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: senha });
+
+  if (error) {
+    erroDiv.textContent = 'Login inválido: ' + error.message;
+    erroDiv.style.display = 'block';
+    return;
+  }
+  window.location.href = 'dashboard.html';
+}
+
+// se já estiver logado, pula direto
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session) window.location.href = 'dashboard.html';
+})();
+</script>
+</body>
+</html>

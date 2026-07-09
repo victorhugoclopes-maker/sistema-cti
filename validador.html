@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Validador MGV</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="validador.html" class="ativo">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Validador ITENSMGV.TXT (Version 4)</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Selecione o arquivo ITENSMGV.TXT para checar a estrutura. A validação roda no navegador — o arquivo não é enviado a nenhum servidor.
+      </p>
+      <input type="file" id="arquivoInput" accept=".txt">
+      <div class="acoes">
+        <button onclick="validarArquivo()">Validar</button>
+      </div>
+    </div>
+
+    <div class="card" id="resultadoCard" style="display:none;">
+      <h2>Resultado</h2>
+      <p id="resumo" style="margin-bottom:12px;font-weight:bold;"></p>
+      <div id="listaResultados"></div>
+    </div>
+
+    <div class="card">
+      <h2>Regras configuradas</h2>
+      <p style="font-size:13px;color:#6b7280;">
+        Este validador checa estrutura básica (nº de colunas por linha, separador, campos vazios em posições obrigatórias).
+        As regras específicas da Version 4 podem ser ajustadas no código (js/validador.js) conforme a especificação exata
+        que você já validou anteriormente com o Especificacao_ItensMGV7.docx.
+      </p>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script src="js/validador.js"></script>
+<script>
+(async () => { await protegerPagina(); })();
+
+function validarArquivo() {
+  const input = document.getElementById('arquivoInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const conteudo = e.target.result;
+    const resultado = validarItensMGV(conteudo);
+    exibirResultado(resultado);
+  };
+  reader.readAsText(input.files[0], 'ISO-8859-1');
+}
+
+function exibirResultado(resultado) {
+  document.getElementById('resultadoCard').style.display = 'block';
+  const resumo = document.getElementById('resumo');
+  resumo.textContent = `${resultado.linhas} linhas analisadas — ${resultado.erros.length} erro(s) encontrado(s)`;
+  resumo.style.color = resultado.erros.length ? '#dc2626' : '#065f46';
+
+  const lista = document.getElementById('listaResultados');
+  lista.innerHTML = '';
+  if (resultado.erros.length === 0) {
+    lista.innerHTML = '<div class="linha-resultado ok">Nenhum erro estrutural encontrado ✔</div>';
+  } else {
+    resultado.erros.forEach(erro => {
+      const div = document.createElement('div');
+      div.className = 'linha-resultado erro-item';
+      div.textContent = erro;
+      lista.appendChild(div);
+    });
+  }
+}
+</script>
+</body>
+</html>

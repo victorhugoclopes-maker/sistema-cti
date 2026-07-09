@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Dashboard</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html" class="ativo">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Resumo</h2>
+      <div class="form-grid">
+        <div>
+          <p style="font-size:13px;color:#6b7280;">OS em aberto</p>
+          <p style="font-size:28px;font-weight:bold;" id="qtdAbertas">-</p>
+        </div>
+        <div>
+          <p style="font-size:13px;color:#6b7280;">Total de clientes</p>
+          <p style="font-size:28px;font-weight:bold;" id="qtdClientes">-</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="cardSemContato" style="display:none;">
+      <h2>⚠️ Clientes sem chamado há mais de 1 ano</h2>
+      <table>
+        <thead><tr><th>Cliente</th><th>Última OS</th></tr></thead>
+        <tbody id="tabelaSemContato"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Últimas Ordens de Serviço</h2>
+      <table id="tabelaOS">
+        <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Data</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="window.location.href='os.html'">Ver todas</button>
+      </div>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+(async () => {
+  await protegerPagina();
+
+  const { count: qtdAbertas } = await supabaseClient
+    .from('ordens_servico').select('*', { count: 'exact', head: true }).eq('status', 'aberta');
+  document.getElementById('qtdAbertas').textContent = qtdAbertas ?? 0;
+
+  const { count: qtdClientes } = await supabaseClient
+    .from('clientes').select('*', { count: 'exact', head: true });
+  document.getElementById('qtdClientes').textContent = qtdClientes ?? 0;
+
+  const { data: osRecentes } = await supabaseClient
+    .from('ordens_servico')
+    .select('numero_os, status, data_abertura, clientes(nome)')
+    .order('criado_em', { ascending: false })
+    .limit(5);
+
+  const tbody = document.querySelector('#tabelaOS tbody');
+  tbody.innerHTML = '';
+  (osRecentes || []).forEach(os => {
+    const tr = document.createElement('tr');
+    tr.onclick = () => window.location.href = 'os.html';
+    tr.innerHTML = `
+      <td>${os.numero_os}</td>
+      <td>${os.clientes?.nome || '-'}</td>
+      <td><span class="badge ${os.status}">${os.status.replace('_',' ')}</span></td>
+      <td>${formatarData(os.data_abertura)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  if (!osRecentes || osRecentes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhuma OS cadastrada ainda</td></tr>';
+  }
+
+  await carregarClientesSemContato();
+})();
+
+async function carregarClientesSemContato() {
+  const { data: clientes } = await supabaseClient
+    .from('clientes')
+    .select('id, nome, ordens_servico(data_abertura)');
+
+  const umAnoAtras = new Date();
+  umAnoAtras.setFullYear(umAnoAtras.getFullYear() - 1);
+
+  const semContato = [];
+  (clientes || []).forEach(c => {
+    const datas = (c.ordens_servico || []).map(os => os.data_abertura).filter(Boolean).sort();
+    const ultimaData = datas.length ? datas[datas.length - 1] : null;
+    // só entra na lista quem já teve OS alguma vez e a última foi há mais de 1 ano
+    if (ultimaData && new Date(ultimaData) < umAnoAtras) {
+      semContato.push({ nome: c.nome, ultimaData });
+    }
+  });
+
+  if (semContato.length > 0) {
+    document.getElementById('cardSemContato').style.display = 'block';
+    const tbody = document.getElementById('tabelaSemContato');
+    tbody.innerHTML = '';
+    semContato.sort((a, b) => a.ultimaData.localeCompare(b.ultimaData));
+    semContato.forEach(c => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${c.nome}</td><td>${formatarData(c.ultimaData)}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+}
+</script>
+</body>
+</html>

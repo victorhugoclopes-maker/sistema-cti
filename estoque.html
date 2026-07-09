@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Estoque</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html" class="ativo">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Importar Nota Fiscal (entrada de peças)</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Selecione o arquivo XML da NF-e. O sistema lê os itens automaticamente — você confirma antes de dar entrada no estoque.
+      </p>
+      <input type="file" id="xmlInput" accept=".xml">
+      <div class="acoes">
+        <button onclick="processarXml()">Ler Nota Fiscal</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewCard" style="display:none;">
+      <h2>Itens encontrados na nota <span id="numeroNotaTitulo"></span></h2>
+      <table>
+        <thead><tr><th>Código</th><th>Nome</th><th>Qtd</th><th>Unid.</th><th>Valor Unit.</th></tr></thead>
+        <tbody id="tabelaPreview"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportacao()">Confirmar entrada no estoque</button>
+        <button class="secundario" onclick="document.getElementById('previewCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="tituloFormPeca">Adicionar Peça Manualmente</h2>
+      <input type="hidden" id="pecaId">
+      <div class="form-grid">
+        <div><label>Código</label><input id="pecaCodigo"></div>
+        <div><label>Nome</label><input id="pecaNome"></div>
+        <div><label>Unidade</label><input id="pecaUnidade" value="UN"></div>
+        <div><label>Quantidade em estoque</label><input type="number" id="pecaQuantidade" step="0.01"></div>
+        <div><label>Preço de custo</label><input type="number" id="pecaPrecoCusto" step="0.01"></div>
+        <div><label>Preço de venda</label><input type="number" id="pecaPrecoVenda" step="0.01"></div>
+        <div><label>Estoque mínimo (alerta)</label><input type="number" id="pecaEstoqueMinimo" step="0.01" value="0"></div>
+      </div>
+      <div class="acoes">
+        <button onclick="salvarPeca()">Salvar</button>
+        <button class="secundario" onclick="limparFormPeca()">Limpar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Peças em Estoque</h2>
+      <table>
+        <thead><tr><th>Código</th><th>Nome</th><th>Qtd</th><th>Preço venda</th><th></th></tr></thead>
+        <tbody id="tabelaPecas"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script src="js/nfe.js"></script>
+<script>
+let itensImportados = [];
+let numeroNotaAtual = '';
+
+function processarXml() {
+  const input = document.getElementById('xmlInput');
+  if (!input.files.length) { alert('Selecione o arquivo XML primeiro'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const resultado = lerXmlNFe(e.target.result);
+      itensImportados = resultado.itens;
+      numeroNotaAtual = resultado.numeroNota;
+      exibirPreview(resultado);
+    } catch (err) {
+      alert('Erro ao ler o XML: ' + err.message);
+    }
+  };
+  reader.readAsText(input.files[0], 'UTF-8');
+}
+
+function exibirPreview(resultado) {
+  document.getElementById('previewCard').style.display = 'block';
+  document.getElementById('numeroNotaTitulo').textContent = resultado.numeroNota ? `nº ${resultado.numeroNota}` : '';
+  const tbody = document.getElementById('tabelaPreview');
+  tbody.innerHTML = '';
+  resultado.itens.forEach(item => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${item.codigo}</td><td>${item.nome}</td><td>${item.quantidade}</td><td>${item.unidade}</td><td>R$ ${item.valorUnitario.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function confirmarImportacao() {
+  for (const item of itensImportados) {
+    // procura se já existe peça com esse código
+    let pecaExistente = null;
+    if (item.codigo) {
+      const { data } = await supabaseClient.from('pecas').select('*').eq('codigo', item.codigo).limit(1);
+      if (data && data.length) pecaExistente = data[0];
+    }
+
+    if (pecaExistente) {
+      const novaQtd = (parseFloat(pecaExistente.quantidade) || 0) + item.quantidade;
+      await supabaseClient.from('pecas').update({ quantidade: novaQtd, preco_custo: item.valorUnitario }).eq('id', pecaExistente.id);
+      await supabaseClient.from('movimentacoes_estoque').insert({
+        peca_id: pecaExistente.id, tipo: 'entrada', quantidade: item.quantidade, motivo: `NF-e ${numeroNotaAtual}`
+      });
+    } else {
+      const { data: novaPeca } = await supabaseClient.from('pecas').insert({
+        codigo: item.codigo, nome: item.nome, unidade: item.unidade,
+        quantidade: item.quantidade, preco_custo: item.valorUnitario
+      }).select().single();
+      if (novaPeca) {
+        await supabaseClient.from('movimentacoes_estoque').insert({
+          peca_id: novaPeca.id, tipo: 'entrada', quantidade: item.quantidade, motivo: `NF-e ${numeroNotaAtual}`
+        });
+      }
+    }
+  }
+  alert('Estoque atualizado com sucesso!');
+  document.getElementById('previewCard').style.display = 'none';
+  document.getElementById('xmlInput').value = '';
+  carregarPecas();
+}
+
+async function carregarPecas() {
+  const { data } = await supabaseClient.from('pecas').select('*').order('nome');
+  const tbody = document.getElementById('tabelaPecas');
+  tbody.innerHTML = '';
+  (data || []).forEach(p => {
+    const tr = document.createElement('tr');
+    const alertaEstoque = p.estoque_minimo > 0 && p.quantidade <= p.estoque_minimo;
+    tr.innerHTML = `<td>${p.codigo || '-'}</td><td>${p.nome}${alertaEstoque ? ' ⚠️' : ''}</td>
+      <td>${p.quantidade} ${p.unidade || ''}</td><td>R$ ${p.preco_venda ? Number(p.preco_venda).toFixed(2) : '-'}</td>
+      <td><button class="secundario" onclick='editarPeca(${JSON.stringify(p)})'>Editar</button></td>`;
+    tbody.appendChild(tr);
+  });
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="vazio">Nenhuma peça cadastrada</td></tr>';
+  }
+}
+
+function editarPeca(p) {
+  document.getElementById('tituloFormPeca').textContent = 'Editar Peça';
+  document.getElementById('pecaId').value = p.id;
+  document.getElementById('pecaCodigo').value = p.codigo || '';
+  document.getElementById('pecaNome').value = p.nome || '';
+  document.getElementById('pecaUnidade').value = p.unidade || 'UN';
+  document.getElementById('pecaQuantidade').value = p.quantidade || 0;
+  document.getElementById('pecaPrecoCusto').value = p.preco_custo || '';
+  document.getElementById('pecaPrecoVenda').value = p.preco_venda || '';
+  document.getElementById('pecaEstoqueMinimo').value = p.estoque_minimo || 0;
+  window.scrollTo(0,0);
+}
+
+async function salvarPeca() {
+  const id = document.getElementById('pecaId').value;
+  const registro = {
+    codigo: document.getElementById('pecaCodigo').value,
+    nome: document.getElementById('pecaNome').value,
+    unidade: document.getElementById('pecaUnidade').value || 'UN',
+    quantidade: parseFloat(document.getElementById('pecaQuantidade').value) || 0,
+    preco_custo: parseFloat(document.getElementById('pecaPrecoCusto').value) || null,
+    preco_venda: parseFloat(document.getElementById('pecaPrecoVenda').value) || null,
+    estoque_minimo: parseFloat(document.getElementById('pecaEstoqueMinimo').value) || 0,
+  };
+  if (!registro.nome) { alert('Preencha o nome da peça'); return; }
+
+  if (id) {
+    await supabaseClient.from('pecas').update(registro).eq('id', id);
+  } else {
+    await supabaseClient.from('pecas').insert(registro);
+  }
+  limparFormPeca();
+  carregarPecas();
+}
+
+function limparFormPeca() {
+  document.getElementById('tituloFormPeca').textContent = 'Adicionar Peça Manualmente';
+  document.getElementById('pecaId').value = '';
+  ['pecaCodigo','pecaNome','pecaPrecoCusto','pecaPrecoVenda'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('pecaUnidade').value = 'UN';
+  document.getElementById('pecaQuantidade').value = '';
+  document.getElementById('pecaEstoqueMinimo').value = 0;
+}
+
+(async () => {
+  await protegerPagina();
+  carregarPecas();
+})();
+</script>
+</body>
+</html>
