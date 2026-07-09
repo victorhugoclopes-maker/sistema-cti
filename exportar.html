@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Exportar Dados</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="exportar.html" class="ativo">Exportar</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Exportar Dados para Excel</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:16px;">
+        Baixa uma planilha .xlsx com os dados atuais do sistema. Útil pra backup, ou pra analisar/compartilhar fora do sistema.
+      </p>
+      <div class="acoes" style="flex-direction:column;align-items:stretch;gap:10px;">
+        <button onclick="exportarClientes()">📋 Exportar Clientes</button>
+        <button onclick="exportarEquipamentos()">⚖️ Exportar Balanças / Equipamentos</button>
+        <button onclick="exportarOS()">🔧 Exportar Ordens de Serviço</button>
+        <button onclick="exportarEstoque()">📦 Exportar Estoque de Peças</button>
+        <button onclick="exportarVendas()">💰 Exportar Vendas / Notas</button>
+      </div>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+function baixarPlanilha(dados, nomeArquivo, nomeAba) {
+  if (!dados || dados.length === 0) {
+    alert('Não há dados para exportar ainda.');
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(dados);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, nomeAba);
+  XLSX.writeFile(wb, nomeArquivo);
+}
+
+async function exportarClientes() {
+  const { data } = await supabaseClient.from('clientes').select('nome, empresa, telefone, endereco, observacoes, criado_em');
+  const formatado = (data || []).map(c => ({
+    Nome: c.nome, Empresa: c.empresa, Telefone: c.telefone, Endereço: c.endereco,
+    Observações: c.observacoes, 'Cadastrado em': c.criado_em?.split('T')[0]
+  }));
+  baixarPlanilha(formatado, 'clientes.xlsx', 'Clientes');
+}
+
+async function exportarEquipamentos() {
+  const { data } = await supabaseClient.from('equipamentos').select('tipo, marca, modelo, numero_serie, capacidade, ultima_calibracao, proxima_calibracao, clientes(nome)');
+  const formatado = (data || []).map(e => ({
+    Cliente: e.clientes?.nome || '', Tipo: e.tipo, Marca: e.marca, Modelo: e.modelo,
+    'Nº Série': e.numero_serie, Capacidade: e.capacidade,
+    'Última Calibração': e.ultima_calibracao, 'Próxima Revisão': e.proxima_calibracao
+  }));
+  baixarPlanilha(formatado, 'balancas_equipamentos.xlsx', 'Equipamentos');
+}
+
+async function exportarOS() {
+  const { data } = await supabaseClient.from('ordens_servico').select('numero_os, orcamento, status, valor, data_abertura, data_conclusao, descricao_defeito, causa, servico_realizado, clientes(nome)');
+  const formatado = (data || []).map(os => ({
+    'Nº OS': os.numero_os, Orçamento: os.orcamento, Cliente: os.clientes?.nome || '',
+    Status: os.status, Valor: os.valor, 'Data Abertura': os.data_abertura, 'Data Conclusão': os.data_conclusao,
+    'Descrição Defeito': os.descricao_defeito, Causa: os.causa, 'Serviço Realizado': os.servico_realizado
+  }));
+  baixarPlanilha(formatado, 'ordens_servico.xlsx', 'Ordens de Serviço');
+}
+
+async function exportarEstoque() {
+  const { data } = await supabaseClient.from('pecas').select('codigo, nome, unidade, quantidade, preco_custo, preco_venda, estoque_minimo');
+  const formatado = (data || []).map(p => ({
+    Código: p.codigo, Nome: p.nome, Unidade: p.unidade, Quantidade: p.quantidade,
+    'Preço Custo': p.preco_custo, 'Preço Venda': p.preco_venda, 'Estoque Mínimo': p.estoque_minimo
+  }));
+  baixarPlanilha(formatado, 'estoque_pecas.xlsx', 'Estoque');
+}
+
+async function exportarVendas() {
+  const { data: vendas } = await supabaseClient.from('vendas').select('numero_venda, data_venda, valor_total, numero_nf, observacoes, clientes(nome), empresas(nome)');
+  const { data: itens } = await supabaseClient.from('vendas_itens').select('venda_id, nome_item, quantidade, valor_unitario');
+
+  const formatadoVendas = (vendas || []).map(v => ({
+    'Nº Venda': v.numero_venda, Empresa: v.empresas?.nome || '', Cliente: v.clientes?.nome || '',
+    Data: v.data_venda, Total: v.valor_total, 'Nº NF': v.numero_nf || '', Observações: v.observacoes
+  }));
+
+  const ws1 = XLSX.utils.json_to_sheet(formatadoVendas);
+  const ws2 = XLSX.utils.json_to_sheet((itens || []).map(i => ({
+    Item: i.nome_item, Quantidade: i.quantidade, 'Valor Unitário': i.valor_unitario
+  })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws1, 'Vendas');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Itens Vendidos');
+  XLSX.writeFile(wb, 'vendas_notas.xlsx');
+}
+
+(async () => { await protegerPagina(); })();
+</script>
+</body>
+</html>
