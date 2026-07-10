@@ -6,6 +6,7 @@
 <title>CTI Máquinas - Vendas</title>
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -23,6 +24,31 @@
   </div>
 
   <div class="container">
+    <div class="card">
+      <h2>Importar Vendas / Notas Fiscais de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita .xlsx ou .csv. Reconhece colunas como <b>Nº Venda</b>, <b>Cliente</b>, <b>Empresa</b>, <b>Data</b>, <b>Valor</b>, <b>Nº NF</b>.
+        Cliente e Empresa são vinculados automaticamente pelo nome, se já estiverem cadastrados.
+      </p>
+      <input type="file" id="planilhaVendasInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilhaVendas()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportVendasCard" style="display:none;">
+      <h2>Confirme as vendas encontradas</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImportVendas"></p>
+      <table>
+        <thead><tr><th>Nº Venda</th><th>Cliente</th><th>Valor</th><th>Nº NF</th></tr></thead>
+        <tbody id="tabelaPreviewImportVendas"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportVendas()">Importar todas</button>
+        <button class="secundario" onclick="document.getElementById('previewImportVendasCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Nova Venda</h2>
       <input type="hidden" id="vendaId">
@@ -79,6 +105,133 @@
 
 <script src="js/config.js"></script>
 <script>
+let vendasParaImportar = [];
+let clientesMapaNomesVendas = {};
+let empresasMapaNomesVendas = {};
+
+const MAPA_COLUNAS_VENDAS = {
+  numeroVenda: ['nº venda', 'no venda', 'numero venda', 'número venda', 'venda', 'nº nota', 'numero nota'],
+  cliente: ['cliente', 'nome do cliente'],
+  empresa: ['empresa', 'empresa emissora'],
+  data: ['data'],
+  valor: ['valor', 'valor total', 'total'],
+  numeroNF: ['nº nf', 'no nf', 'numero nf', 'número nf', 'nf'],
+  observacoes: ['observações', 'observacoes', 'obs'],
+};
+
+function identificarColunaVendas(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS_VENDAS)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  return null;
+}
+
+function converterDataPlanilhaVendas(valor) {
+  if (!valor) return null;
+  if (typeof valor === 'string' && valor.includes('/')) {
+    const [dia, mes, ano] = valor.split('/');
+    if (dia && mes && ano) return `${ano.length === 2 ? '20' + ano : ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
+  }
+  if (typeof valor === 'number') {
+    const data = XLSX.SSF.parse_date_code(valor);
+    if (data) return `${data.y}-${String(data.m).padStart(2,'0')}-${String(data.d).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+async function processarPlanilhaVendas() {
+  const input = document.getElementById('planilhaVendasInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome');
+  clientesMapaNomesVendas = {};
+  (todosClientes || []).forEach(c => { clientesMapaNomesVendas[c.nome.trim().toLowerCase()] = c.id; });
+
+  const { data: todasEmpresas } = await supabaseClient.from('empresas').select('id, nome');
+  empresasMapaNomesVendas = {};
+  (todasEmpresas || []).forEach(e => { empresasMapaNomesVendas[e.nome.trim().toLowerCase()] = e.id; });
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+      if (linhas.length === 0) throw new Error('Planilha vazia');
+
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapa = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColunaVendas(cab);
+        if (campo) mapa[campo] = cab;
+      });
+
+      if (!mapa.numeroVenda) throw new Error('Não encontrei uma coluna de "Nº Venda" ou "Nº NF". Verifique o título das colunas.');
+
+      let semClienteVinculado = 0;
+      vendasParaImportar = linhas.map(linha => {
+        const numeroVenda = (linha[mapa.numeroVenda] || '').toString().trim();
+        const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
+        const nomeEmpresa = mapa.empresa ? (linha[mapa.empresa] || '').toString().trim() : '';
+        const clienteId = clientesMapaNomesVendas[nomeCliente.trim().toLowerCase()] || null;
+        const empresaId = empresasMapaNomesVendas[nomeEmpresa.trim().toLowerCase()] || null;
+        if (nomeCliente && !clienteId) semClienteVinculado++;
+
+        return {
+          numero_venda: numeroVenda,
+          cliente_id: clienteId,
+          cliente_nome_planilha: nomeCliente,
+          empresa_id: empresaId,
+          data_venda: mapa.data ? converterDataPlanilhaVendas(linha[mapa.data]) : null,
+          valor_total: mapa.valor ? parseFloat(linha[mapa.valor]) || 0 : 0,
+          numero_nf: mapa.numeroNF ? (linha[mapa.numeroNF] || '').toString().trim() : '',
+          observacoes: mapa.observacoes ? (linha[mapa.observacoes] || '').toString().trim() : '',
+        };
+      }).filter(v => v.numero_venda);
+
+      exibirPreviewImportVendas(semClienteVinculado);
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImportVendas(semClienteVinculado) {
+  document.getElementById('previewImportVendasCard').style.display = 'block';
+  let resumo = `${vendasParaImportar.length} venda(s)/nota(s) encontrada(s).`;
+  if (semClienteVinculado > 0) {
+    resumo += ` ⚠️ ${semClienteVinculado} não têm cliente correspondente cadastrado.`;
+  }
+  document.getElementById('resumoImportVendas').textContent = resumo;
+
+  const tbody = document.getElementById('tabelaPreviewImportVendas');
+  tbody.innerHTML = '';
+  vendasParaImportar.forEach(v => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${v.numero_venda}</td><td>${v.cliente_nome_planilha || '-'}${!v.cliente_id && v.cliente_nome_planilha ? ' ⚠️' : ''}</td><td>R$ ${v.valor_total.toFixed(2)}</td><td>${v.numero_nf || '-'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function confirmarImportVendas() {
+  const registros = vendasParaImportar.map(v => {
+    const { cliente_nome_planilha, ...resto } = v;
+    return resto;
+  });
+  const { error } = await supabaseClient.from('vendas').insert(registros);
+  if (error) {
+    alert('Erro ao importar: ' + error.message);
+    return;
+  }
+  alert(`${registros.length} venda(s) importada(s) com sucesso!`);
+  document.getElementById('previewImportVendasCard').style.display = 'none';
+  document.getElementById('planilhaVendasInput').value = '';
+  vendasParaImportar = [];
+  carregarVendas();
+}
+
 let clientesCacheVendas = [];
 let empresasCacheVendas = [];
 

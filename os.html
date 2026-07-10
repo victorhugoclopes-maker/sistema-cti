@@ -6,6 +6,7 @@
 <title>CTI Máquinas - Ordens de Serviço</title>
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -23,6 +24,31 @@
   </div>
 
   <div class="container">
+    <div class="card">
+      <h2>Importar Ordens de Serviço de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita .xlsx ou .csv. Reconhece colunas como <b>Nº OS</b>, <b>Cliente</b>, <b>Orçamento</b>, <b>Valor</b>, <b>Status</b>, <b>Data</b>, <b>Descrição do Defeito</b>, <b>Causa</b>, <b>Serviço Realizado</b>.
+        O cliente é vinculado automaticamente se o nome bater com um cliente já cadastrado.
+      </p>
+      <input type="file" id="planilhaOSInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilhaOS()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportOSCard" style="display:none;">
+      <h2>Confirme as OS encontradas</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImportOS"></p>
+      <table>
+        <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Valor</th></tr></thead>
+        <tbody id="tabelaPreviewImportOS"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportOS()">Importar todas</button>
+        <button class="secundario" onclick="document.getElementById('previewImportOSCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
     <div class="card">
       <h2 id="tituloForm">Nova Ordem de Serviço</h2>
       <input type="hidden" id="osId">
@@ -90,6 +116,142 @@
 
 <script src="js/config.js"></script>
 <script>
+let osParaImportar = [];
+let clientesMapaNomes = {}; // nome em minúsculo -> id
+
+const MAPA_COLUNAS_OS = {
+  numeroOS: ['nº os', 'no os', 'numero os', 'número os', 'os', 'ordem de serviço'],
+  cliente: ['cliente', 'nome do cliente', 'empresa'],
+  orcamento: ['orçamento', 'orcamento'],
+  valor: ['valor', 'valor total', 'total'],
+  status: ['status', 'situação', 'situacao'],
+  dataAbertura: ['data abertura', 'data de entrada', 'data'],
+  dataConclusao: ['data conclusão', 'data conclusao', 'data de saída', 'data de saida'],
+  defeito: ['descrição defeito', 'descrição do defeito', 'defeito'],
+  causa: ['causa'],
+  servico: ['serviço realizado', 'servico realizado'],
+};
+
+function identificarColunaOS(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS_OS)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  return null;
+}
+
+function normalizarStatus(valor) {
+  const v = (valor || '').toString().trim().toLowerCase();
+  if (v.includes('andamento')) return 'em_andamento';
+  if (v.includes('conclu') || v.includes('finaliz') || v.includes('entregue')) return 'concluida';
+  return 'aberta';
+}
+
+function converterDataPlanilha(valor) {
+  if (!valor) return null;
+  // já vem como texto tipo dd/mm/aaaa
+  if (typeof valor === 'string' && valor.includes('/')) {
+    const [dia, mes, ano] = valor.split('/');
+    if (dia && mes && ano) return `${ano.length === 2 ? '20' + ano : ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
+  }
+  // número serial do Excel
+  if (typeof valor === 'number') {
+    const data = XLSX.SSF.parse_date_code(valor);
+    if (data) return `${data.y}-${String(data.m).padStart(2,'0')}-${String(data.d).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+async function processarPlanilhaOS() {
+  const input = document.getElementById('planilhaOSInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  // carrega mapa de clientes existentes pra vincular pelo nome
+  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome');
+  clientesMapaNomes = {};
+  (todosClientes || []).forEach(c => { clientesMapaNomes[c.nome.trim().toLowerCase()] = c.id; });
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+      if (linhas.length === 0) throw new Error('Planilha vazia');
+
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapa = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColunaOS(cab);
+        if (campo) mapa[campo] = cab;
+      });
+
+      if (!mapa.numeroOS) throw new Error('Não encontrei uma coluna de "Nº OS". Verifique o título das colunas.');
+
+      let semClienteVinculado = 0;
+      osParaImportar = linhas.map(linha => {
+        const numeroOS = (linha[mapa.numeroOS] || '').toString().trim();
+        const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
+        const clienteId = clientesMapaNomes[nomeCliente.trim().toLowerCase()] || null;
+        if (nomeCliente && !clienteId) semClienteVinculado++;
+
+        return {
+          numero_os: numeroOS,
+          orcamento: mapa.orcamento ? (linha[mapa.orcamento] || '').toString().trim() : numeroOS,
+          cliente_id: clienteId,
+          cliente_nome_planilha: nomeCliente,
+          status: mapa.status ? normalizarStatus(linha[mapa.status]) : 'concluida',
+          valor: mapa.valor ? parseFloat(linha[mapa.valor]) || 0 : 0,
+          data_abertura: mapa.dataAbertura ? converterDataPlanilha(linha[mapa.dataAbertura]) : null,
+          data_conclusao: mapa.dataConclusao ? converterDataPlanilha(linha[mapa.dataConclusao]) : null,
+          descricao_defeito: mapa.defeito ? (linha[mapa.defeito] || '').toString().trim() : '',
+          causa: mapa.causa ? (linha[mapa.causa] || '').toString().trim() : '',
+          servico_realizado: mapa.servico ? (linha[mapa.servico] || '').toString().trim() : '',
+        };
+      }).filter(os => os.numero_os);
+
+      exibirPreviewImportOS(semClienteVinculado);
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImportOS(semClienteVinculado) {
+  document.getElementById('previewImportOSCard').style.display = 'block';
+  let resumo = `${osParaImportar.length} OS encontrada(s).`;
+  if (semClienteVinculado > 0) {
+    resumo += ` ⚠️ ${semClienteVinculado} não têm cliente correspondente cadastrado (serão importadas sem cliente vinculado — você pode ajustar manualmente depois).`;
+  }
+  document.getElementById('resumoImportOS').textContent = resumo;
+
+  const tbody = document.getElementById('tabelaPreviewImportOS');
+  tbody.innerHTML = '';
+  osParaImportar.forEach(os => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.cliente_nome_planilha || '-'}${!os.cliente_id && os.cliente_nome_planilha ? ' ⚠️' : ''}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function confirmarImportOS() {
+  const registros = osParaImportar.map(os => {
+    const { cliente_nome_planilha, ...resto } = os;
+    return resto;
+  });
+  const { error } = await supabaseClient.from('ordens_servico').insert(registros);
+  if (error) {
+    alert('Erro ao importar: ' + error.message);
+    return;
+  }
+  alert(`${registros.length} OS importada(s) com sucesso!`);
+  document.getElementById('previewImportOSCard').style.display = 'none';
+  document.getElementById('planilhaOSInput').value = '';
+  osParaImportar = [];
+  carregarOS();
+}
+
 let clientesCache = [];
 let equipamentosCache = [];
 
