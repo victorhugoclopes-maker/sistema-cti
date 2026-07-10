@@ -50,6 +50,14 @@
     </div>
 
     <div class="card">
+      <h2>⚠️ Zona de Perigo</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Remove TODOS os clientes cadastrados (e os equipamentos vinculados a eles). Não afeta OS, vendas ou estoque já registrados. Essa ação não pode ser desfeita.
+      </p>
+      <button class="perigo" onclick="iniciarRemocaoTodosClientes()">🗑️ Remover TODOS os clientes</button>
+    </div>
+
+    <div class="card">
       <h2 id="tituloForm">Novo Cliente</h2>
       <input type="hidden" id="clienteId">
       <div class="form-grid">
@@ -232,6 +240,30 @@ async function confirmarImportClientes() {
   document.getElementById('previewImportCard').style.display = 'none';
   document.getElementById('planilhaInput').value = '';
   clientesParaImportar = [];
+  carregarClientes();
+}
+
+async function iniciarRemocaoTodosClientes() {
+  const totalAtual = todosClientesCache.length;
+  if (totalAtual === 0) { alert('Não há clientes cadastrados.'); return; }
+
+  const primeiraConfirmacao = confirm(
+    `Isso vai apagar TODOS os ${totalAtual} clientes cadastrados (e os equipamentos deles). Essa ação NÃO pode ser desfeita. Tem certeza que quer continuar?`
+  );
+  if (!primeiraConfirmacao) return;
+
+  const textoDigitado = prompt('Pra confirmar de vez, digite REMOVER (em maiúsculas) e clique OK:');
+  if (textoDigitado !== 'REMOVER') {
+    alert('Cancelado. Nenhum cliente foi removido.');
+    return;
+  }
+
+  const { error } = await supabaseClient.from('clientes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if (error) {
+    alert('Erro ao remover clientes: ' + error.message);
+    return;
+  }
+  alert('Todos os clientes foram removidos.');
   carregarClientes();
 }
 
