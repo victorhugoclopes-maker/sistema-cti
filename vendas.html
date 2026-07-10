@@ -69,6 +69,7 @@
 
     <div class="card">
       <h2>Vendas Registradas</h2>
+      <input type="text" id="buscaVenda" placeholder="🔍 Buscar por nº venda, cliente, empresa ou NF..." oninput="filtrarVendas()" style="margin-bottom:14px;">
       <table>
         <thead><tr><th>Nº Venda</th><th>Empresa</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Nº NF</th></tr></thead>
         <tbody id="tabelaVendas"></tbody>
@@ -209,20 +210,39 @@ function copiarResumo() {
   alert('Resumo copiado! Agora é só colar no Emissor do Sebrae.');
 }
 
+let todasVendasCache = [];
+
 async function carregarVendas() {
   const { data } = await supabaseClient.from('vendas').select('*, clientes(nome), empresas(nome)').order('criado_em', { ascending: false });
+  todasVendasCache = data || [];
+  renderizarTabelaVendas(todasVendasCache);
+}
+
+function renderizarTabelaVendas(lista) {
   const tbody = document.getElementById('tabelaVendas');
   tbody.innerHTML = '';
-  (data || []).forEach(v => {
+  lista.forEach(v => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${v.numero_venda}</td><td>${v.empresas?.nome || '-'}</td><td>${v.clientes?.nome || '-'}</td><td>${formatarData(v.data_venda)}</td>
       <td>R$ ${Number(v.valor_total).toFixed(2)}</td><td>${v.numero_nf || '-'}</td>`;
     tr.onclick = () => abrirVenda(v);
     tbody.appendChild(tr);
   });
-  if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="vazio">Nenhuma venda registrada</td></tr>';
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="vazio">Nenhuma venda encontrada</td></tr>';
   }
+}
+
+function filtrarVendas() {
+  const termo = document.getElementById('buscaVenda').value.trim().toLowerCase();
+  if (!termo) { renderizarTabelaVendas(todasVendasCache); return; }
+  const filtradas = todasVendasCache.filter(v =>
+    (v.numero_venda || '').toLowerCase().includes(termo) ||
+    (v.clientes?.nome || '').toLowerCase().includes(termo) ||
+    (v.empresas?.nome || '').toLowerCase().includes(termo) ||
+    (v.numero_nf || '').toLowerCase().includes(termo)
+  );
+  renderizarTabelaVendas(filtradas);
 }
 
 async function abrirVenda(v) {

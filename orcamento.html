@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orçamento</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #000; margin: 0; padding: 20px; }
+  .folha { max-width: 800px; margin: 0 auto; border: 2px solid #000; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
+  .rotulo { font-weight: bold; width: 110px; background: #f5f5f5; }
+  .rotulo-pequeno { font-weight: bold; width: 90px; background: #f5f5f5; }
+  .titulo-secao { text-align: center; font-weight: bold; background: #eee; padding: 5px; }
+  .cabecalho-topo td { border: none; }
+  .logo-caixa { width: 55%; padding: 10px; }
+  .logo-caixa .nome-cti { font-size: 26px; font-weight: 900; color: #cc0000; font-style: italic; }
+  .logo-caixa .subnome { font-size: 11px; font-weight: bold; }
+  .logo-caixa .slogan { font-size: 10px; font-style: italic; }
+  .dados-entrada { width: 45%; }
+  .dados-entrada td { border: 1px solid #000; }
+  .dados-entrada .campo { font-weight: bold; }
+  .editavel {
+    border: none; border-bottom: 1px dotted #999; display: inline-block; min-width: 60px;
+    font-family: Arial; font-size: 12px; padding: 1px 2px; background: transparent;
+  }
+  .aviso { background: #fdd; color: #b00; font-weight: bold; text-align: center; padding: 6px; font-size: 11px; }
+  .itens-tabela td.valor { width: 100px; text-align: right; }
+  .linha-total td { font-weight: bold; font-size: 14px; background: #f5f5f5; }
+  .botoes { max-width: 800px; margin: 16px auto; text-align: center; }
+  .botoes button { background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 14px; cursor: pointer; margin: 0 6px; }
+  @media print { .botoes { display: none; } body { padding: 0; } .folha { border: 1px solid #000; } }
+</style>
+</head>
+<body>
+
+<div class="botoes">
+  <button onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button>
+  <button onclick="compartilharWhatsApp()" style="background:#25D366;">📱 Enviar por WhatsApp</button>
+  <button onclick="window.close()" style="background:#6b7280;">Fechar</button>
+</div>
+
+<div class="folha" id="folha">
+  <table class="cabecalho-topo">
+    <tr>
+      <td class="logo-caixa">
+        <span class="nome-cti">CTI</span>
+        <div class="subnome">MÁQUINAS E EQUIPAMENTOS<br><span class="slogan">Tudo para o seu comércio</span></div>
+      </td>
+      <td class="dados-entrada">
+        <table>
+          <tr><td class="campo">Orçamento:</td><td id="fNumero"></td></tr>
+          <tr><td class="campo">Data:</td><td id="fData"></td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <div class="titulo-secao">Orçamento Assistência Técnica Permissão 70000387</div>
+  <table>
+    <tr><td class="rotulo">Empresa</td><td>LLEBESAI REPARAÇÃO DE MÁQUINAS LTDA</td><td class="rotulo-pequeno">CNPJ</td><td>07.606.352.0001.34</td></tr>
+    <tr><td class="rotulo">Endereço</td><td>RUA TAJURI, 364</td><td class="rotulo-pequeno">Bairro</td><td>VICENTE DE CARVALHO</td></tr>
+    <tr><td class="rotulo">Cidade/ UF</td><td>RIO DE JANEIRO - RJ</td><td class="rotulo-pequeno">CEP</td><td>21371-100</td></tr>
+    <tr><td class="rotulo">Nome</td><td>FRANKLIN OLIVEIRA / VERA LUCIA</td><td class="rotulo-pequeno">Celular</td><td>99946-2687</td></tr>
+    <tr><td class="rotulo">Email</td><td>veractidasbalancas@gmail.com</td><td class="rotulo-pequeno">Fone</td><td>3301-5703</td></tr>
+  </table>
+
+  <div class="titulo-secao">CLIENTE</div>
+  <table>
+    <tr><td class="rotulo">Empresa:</td><td id="fClienteEmpresa"></td><td class="rotulo-pequeno">CNPJ</td><td class="editavel" contenteditable="true"></td></tr>
+    <tr><td class="rotulo">Endereço:</td><td id="fClienteEndereco"></td><td class="rotulo-pequeno">Bairro</td><td class="editavel" contenteditable="true"></td></tr>
+    <tr><td class="rotulo">Cidade/UF</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">CEP</td><td class="editavel" contenteditable="true"></td></tr>
+    <tr><td class="rotulo">Nome:</td><td id="fClienteNome"></td><td class="rotulo-pequeno">Celular</td><td id="fClienteTelefone"></td></tr>
+    <tr><td class="rotulo">Email:</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Fone</td><td class="editavel" contenteditable="true"></td></tr>
+  </table>
+
+  <div class="titulo-secao">Descrição da Balança e ou Equipamento</div>
+  <table>
+    <tr><td class="rotulo">Produto</td><td id="fProduto"></td><td class="rotulo-pequeno">Marca</td><td id="fMarca"></td><td class="rotulo-pequeno">Modelo</td><td id="fModelo"></td></tr>
+    <tr><td class="rotulo">Lacre anterior</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Inventario</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Nº de Série</td><td id="fSerie"></td></tr>
+    <tr><td class="rotulo">Lacre Nº</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Selo Nº</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Orçamento</td><td id="fOrcamentoNum"></td></tr>
+  </table>
+
+  <table>
+    <tr><td colspan="2"><b>Descrição do Defeito:</b> <span id="fDefeito"></span></td></tr>
+  </table>
+
+  <table class="itens-tabela">
+    <tbody id="tabelaItens"></tbody>
+    <tr class="linha-total"><td>TOTAL ORÇAMENTO</td><td class="valor" id="fTotal"></td></tr>
+  </table>
+
+  <table>
+    <tr>
+      <td class="rotulo" style="width:200px;">Executado Pelo Técnico:</td>
+      <td class="editavel" contenteditable="true" style="width:30%;"></td>
+      <td class="rotulo" style="width:220px;">Orçamento referente OS entrada:</td>
+      <td id="fNumeroOSRef"></td>
+    </tr>
+    <tr>
+      <td class="rotulo">Forma de pagamento:</td>
+      <td colspan="3" class="editavel" contenteditable="true">A VISTA</td>
+    </tr>
+    <tr>
+      <td class="rotulo">Chave PIX</td>
+      <td colspan="3">CNPJ 07.606.352.0001.34</td>
+    </tr>
+    <tr>
+      <td class="rotulo">Execução Serviço:</td>
+      <td>( &nbsp;<span class="editavel" contenteditable="true">&nbsp;</span>&nbsp; ) Oficina &nbsp; ( &nbsp;<span class="editavel" contenteditable="true">&nbsp;</span>&nbsp; ) Local &nbsp; <span class="editavel" contenteditable="true"></span></td>
+      <td class="rotulo">Acompanhado pelo cliente:</td>
+      <td class="editavel" contenteditable="true"></td>
+    </tr>
+  </table>
+
+  <div class="aviso">ATENDIMENTO EXTERNO NÃO AUTORIZADO SERÁ COBRADO O VALOR DA VISITA TÉCNICA – R$ 190,00</div>
+</div>
+
+<script src="js/config.js"></script>
+<script>
+function moeda(v) { return 'R$ ' + Number(v || 0).toFixed(2).replace('.', ','); }
+function formatarDataCurta(d) {
+  if (!d) return new Date().toLocaleDateString('pt-BR');
+  const [ano, mes, dia] = d.split('-');
+  return `${dia}/${mes}/${ano}`;
+}
+
+let dadosOrcamentoAtual = {};
+
+function compartilharWhatsApp() {
+  const { numero, total, clienteNome, telefone } = dadosOrcamentoAtual;
+  const mensagem = `Olá${clienteNome ? ' ' + clienteNome : ''}! Segue o orçamento nº ${numero || ''} no valor de ${moeda(total)}. Qualquer dúvida, estou à disposição. (Anexe o PDF do orçamento antes de enviar — use o botão "Imprimir / Salvar como PDF" primeiro.)`;
+
+  let telefoneLimpo = (telefone || '').replace(/\D/g, '');
+  // adiciona código do Brasil (55) se o número não tiver
+  if (telefoneLimpo && !telefoneLimpo.startsWith('55')) telefoneLimpo = '55' + telefoneLimpo;
+
+  const url = telefoneLimpo
+    ? `https://wa.me/${telefoneLimpo}?text=${encodeURIComponent(mensagem)}`
+    : `https://wa.me/?text=${encodeURIComponent(mensagem)}`;
+
+  window.open(url, '_blank');
+}
+
+async function carregarOrcamento() {
+  await protegerPagina();
+  const params = new URLSearchParams(window.location.search);
+  const osId = params.get('id');
+  if (!osId) { document.body.innerHTML = '<p style="padding:20px;">Nenhuma OS selecionada.</p>'; return; }
+
+  const { data: os } = await supabaseClient
+    .from('ordens_servico')
+    .select('*, clientes(nome, empresa, endereco, telefone), equipamentos(tipo, marca, modelo, numero_serie)')
+    .eq('id', osId)
+    .single();
+
+  if (!os) { document.body.innerHTML = '<p style="padding:20px;">OS não encontrada.</p>'; return; }
+
+  document.getElementById('fNumero').textContent = os.orcamento || os.numero_os || '';
+  document.getElementById('fData').textContent = formatarDataCurta(os.data_abertura);
+
+  document.getElementById('fClienteEmpresa').textContent = os.clientes?.empresa || '';
+  document.getElementById('fClienteEndereco').textContent = os.clientes?.endereco || '';
+  document.getElementById('fClienteNome').textContent = os.clientes?.nome || '';
+  document.getElementById('fClienteTelefone').textContent = os.clientes?.telefone || '';
+
+  document.getElementById('fProduto').textContent = os.equipamentos?.tipo || '';
+  document.getElementById('fMarca').textContent = os.equipamentos?.marca || '';
+  document.getElementById('fModelo').textContent = os.equipamentos?.modelo || '';
+  document.getElementById('fSerie').textContent = os.equipamentos?.numero_serie || '';
+  document.getElementById('fOrcamentoNum').textContent = os.orcamento || '';
+  document.getElementById('fNumeroOSRef').textContent = os.numero_os || '';
+
+  document.getElementById('fDefeito').textContent = os.descricao_defeito || '';
+
+  const { data: pecas } = await supabaseClient.from('os_pecas').select('*').eq('os_id', osId);
+  const tbody = document.getElementById('tabelaItens');
+  tbody.innerHTML = '';
+  let totalPecas = 0;
+
+  (pecas || []).forEach(p => {
+    const valorUnit = p.valor_unitario || 0;
+    const subtotal = valorUnit * p.quantidade;
+    totalPecas += subtotal;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.nome_peca} (${p.quantidade} un)</td><td class="valor">${moeda(subtotal)}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  const maoDeObra = parseFloat(os.mao_de_obra) || 0;
+  if (maoDeObra > 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>Mão de obra</td><td class="valor">${moeda(maoDeObra)}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  // linhas em branco pra manter o visual do modelo original, caso tenha poucos itens
+  const linhasAtuais = (pecas || []).length + (maoDeObra > 0 ? 1 : 0);
+  for (let i = linhasAtuais; i < 3; i++) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>&nbsp;</td><td class="valor">&nbsp;</td>`;
+    tbody.appendChild(tr);
+  }
+
+  document.getElementById('fTotal').textContent = moeda(os.valor || (totalPecas + maoDeObra));
+
+  dadosOrcamentoAtual = {
+    numero: os.orcamento || os.numero_os || '',
+    total: os.valor || (totalPecas + maoDeObra),
+    clienteNome: os.clientes?.nome || '',
+    telefone: os.clientes?.telefone || '',
+  };
+}
+
+carregarOrcamento();
+</script>
+</body>
+</html>

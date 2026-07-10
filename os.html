@@ -45,7 +45,7 @@
             <option value="concluida">Concluída</option>
           </select>
         </div>
-        <div><label>Valor</label><input id="valor" placeholder="R$"></div>
+        <div><label>Mão de obra (R$)</label><input type="number" id="maoDeObra" min="0" step="0.01" value="0" onchange="calcularOrcamento()"></div>
       </div>
       <label>Descrição do defeito</label>
       <textarea id="descricaoDefeito"></textarea>
@@ -53,25 +53,34 @@
       <input id="causa" placeholder="Ex: célula de carga, placa eletrônica, fonte, display...">
       <label>Serviço realizado</label>
       <textarea id="servicoRealizado"></textarea>
+      <button type="button" class="secundario" onclick="preencherServicoAutomatico()" style="margin-bottom:10px;">✏️ Preencher automaticamente com base nas peças</button>
 
       <label style="margin-top:8px;">Peças utilizadas</label>
       <p style="font-size:12px;color:#6b7280;margin-bottom:8px;">
-        Digite o nome livremente. Se o nome bater com uma peça do estoque, o sistema desconta automaticamente ao salvar uma OS nova.
+        Digite o nome livremente. Se bater com uma peça do estoque, o preço é preenchido sozinho (pode ajustar se precisar) e o valor total é calculado automaticamente.
       </p>
       <table style="margin-bottom:10px;">
-        <thead><tr><th>Peça</th><th style="width:100px;">Qtd</th><th style="width:40px;"></th></tr></thead>
+        <thead><tr><th>Peça</th><th style="width:80px;">Qtd</th><th style="width:100px;">Valor unit.</th><th style="width:40px;"></th></tr></thead>
         <tbody id="tabelaPecasUsadas"></tbody>
       </table>
       <button type="button" class="secundario" onclick="adicionarLinhaPeca()">+ Adicionar peça</button>
 
+      <p style="margin-top:14px;font-size:14px;color:#374151;">
+        Peças: <span id="totalPecas">R$ 0,00</span> &nbsp;+&nbsp; Mão de obra: <span id="totalMaoDeObra">R$ 0,00</span>
+      </p>
+      <p style="font-weight:bold;font-size:18px;">Orçamento total: <span id="totalOrcamento">R$ 0,00</span></p>
+
       <div class="acoes" style="margin-top:16px;">
         <button onclick="salvarOS()">Salvar</button>
         <button class="secundario" onclick="limparForm()">Limpar</button>
+        <button class="secundario" id="btnImprimir" onclick="imprimirOSAtual()" style="display:none;">🖨️ Imprimir OS</button>
+        <button class="secundario" id="btnOrcamento" onclick="gerarOrcamentoAtual()" style="display:none;">💰 Gerar Orçamento</button>
       </div>
     </div>
 
     <div class="card">
       <h2>Ordens de Serviço</h2>
+      <input type="text" id="buscaOS" placeholder="🔍 Buscar por nº OS, cliente ou status..." oninput="filtrarOS()" style="margin-bottom:14px;">
       <table>
         <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Data</th></tr></thead>
         <tbody id="tabelaOS"></tbody>
@@ -105,14 +114,21 @@ async function carregarEquipamentosDoCliente() {
     equipamentosCache.map(e => `<option value="${e.id}">${e.tipo || ''} ${e.modelo || ''} (${e.numero_serie || 's/n'})</option>`).join('');
 }
 
+let todasOSCache = [];
+
 async function carregarOS() {
   const { data } = await supabaseClient
     .from('ordens_servico')
     .select('*, clientes(nome)')
     .order('criado_em', { ascending: false });
+  todasOSCache = data || [];
+  renderizarTabelaOS(todasOSCache);
+}
+
+function renderizarTabelaOS(lista) {
   const tbody = document.getElementById('tabelaOS');
   tbody.innerHTML = '';
-  (data || []).forEach(os => {
+  lista.forEach(os => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${os.numero_os}</td><td>${os.clientes?.nome || '-'}</td>
       <td><span class="badge ${os.status}">${os.status.replace('_',' ')}</span></td>
@@ -120,9 +136,20 @@ async function carregarOS() {
     tr.onclick = () => abrirOS(os);
     tbody.appendChild(tr);
   });
-  if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhuma OS cadastrada</td></tr>';
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhuma OS encontrada</td></tr>';
   }
+}
+
+function filtrarOS() {
+  const termo = document.getElementById('buscaOS').value.trim().toLowerCase();
+  if (!termo) { renderizarTabelaOS(todasOSCache); return; }
+  const filtradas = todasOSCache.filter(os =>
+    (os.numero_os || '').toLowerCase().includes(termo) ||
+    (os.clientes?.nome || '').toLowerCase().includes(termo) ||
+    (os.status || '').toLowerCase().includes(termo)
+  );
+  renderizarTabelaOS(filtradas);
 }
 
 async function abrirOS(os) {
@@ -131,7 +158,6 @@ async function abrirOS(os) {
   document.getElementById('numeroOS').value = os.numero_os || '';
   document.getElementById('orcamento').value = os.orcamento || '';
   document.getElementById('status').value = os.status || 'aberta';
-  document.getElementById('valor').value = os.valor || '';
   document.getElementById('descricaoDefeito').value = os.descricao_defeito || '';
   document.getElementById('causa').value = os.causa || '';
   document.getElementById('servicoRealizado').value = os.servico_realizado || '';
@@ -141,20 +167,67 @@ async function abrirOS(os) {
 
   const { data: pecasUsadas } = await supabaseClient.from('os_pecas').select('*').eq('os_id', os.id);
   document.getElementById('tabelaPecasUsadas').innerHTML = '';
-  (pecasUsadas || []).forEach(p => adicionarLinhaPeca(p.nome_peca, p.quantidade));
+  (pecasUsadas || []).forEach(p => adicionarLinhaPeca(p.nome_peca, p.quantidade, p.valor_unitario || 0));
+
+  document.getElementById('maoDeObra').value = os.mao_de_obra || 0;
+  calcularOrcamento();
+  document.getElementById('btnImprimir').style.display = 'inline-block';
+  document.getElementById('btnOrcamento').style.display = 'inline-block';
 
   window.scrollTo(0,0);
 }
 
-function adicionarLinhaPeca(nome = '', quantidade = 1) {
+function imprimirOSAtual() {
+  const id = document.getElementById('osId').value;
+  if (!id) return;
+  window.open(`imprimir_os.html?id=${id}`, '_blank');
+}
+
+function gerarOrcamentoAtual() {
+  const id = document.getElementById('osId').value;
+  if (!id) return;
+  window.open(`orcamento.html?id=${id}`, '_blank');
+}
+
+function adicionarLinhaPeca(nome = '', quantidade = 1, valorUnitario = 0) {
   const tbody = document.getElementById('tabelaPecasUsadas');
   const tr = document.createElement('tr');
   tr.innerHTML = `
-    <td><input type="text" class="peca-nome" value="${nome}" placeholder="Nome da peça" style="margin-bottom:0;"></td>
-    <td><input type="number" class="peca-qtd" value="${quantidade}" min="0.01" step="0.01" style="margin-bottom:0;"></td>
-    <td><button type="button" class="perigo" onclick="this.closest('tr').remove()">X</button></td>
+    <td><input type="text" class="peca-nome" value="${nome}" placeholder="Nome da peça" style="margin-bottom:0;" onchange="buscarPrecoPeca(this)"></td>
+    <td><input type="number" class="peca-qtd" value="${quantidade}" min="0.01" step="0.01" style="margin-bottom:0;" onchange="calcularOrcamento()"></td>
+    <td><input type="number" class="peca-valor" value="${valorUnitario}" min="0" step="0.01" style="margin-bottom:0;" onchange="calcularOrcamento()"></td>
+    <td><button type="button" class="perigo" onclick="this.closest('tr').remove(); calcularOrcamento();">X</button></td>
   `;
   tbody.appendChild(tr);
+}
+
+// Ao digitar o nome da peça e sair do campo, busca o preço de venda cadastrado no estoque
+async function buscarPrecoPeca(inputNome) {
+  const nome = inputNome.value.trim();
+  if (!nome) return;
+  const peca = await encontrarPecaPorNome(nome);
+  if (peca && peca.preco_venda) {
+    const tr = inputNome.closest('tr');
+    tr.querySelector('.peca-valor').value = peca.preco_venda;
+  }
+  calcularOrcamento();
+}
+
+function calcularOrcamento() {
+  const linhas = document.querySelectorAll('#tabelaPecasUsadas tr');
+  let totalPecas = 0;
+  linhas.forEach(tr => {
+    const qtd = parseFloat(tr.querySelector('.peca-qtd').value) || 0;
+    const valor = parseFloat(tr.querySelector('.peca-valor').value) || 0;
+    totalPecas += qtd * valor;
+  });
+  const maoDeObra = parseFloat(document.getElementById('maoDeObra').value) || 0;
+  const total = totalPecas + maoDeObra;
+
+  document.getElementById('totalPecas').textContent = 'R$ ' + totalPecas.toFixed(2).replace('.', ',');
+  document.getElementById('totalMaoDeObra').textContent = 'R$ ' + maoDeObra.toFixed(2).replace('.', ',');
+  document.getElementById('totalOrcamento').textContent = 'R$ ' + total.toFixed(2).replace('.', ',');
+  return total;
 }
 
 function coletarPecasDoFormulario() {
@@ -163,20 +236,23 @@ function coletarPecasDoFormulario() {
   linhas.forEach(tr => {
     const nome = tr.querySelector('.peca-nome').value.trim();
     const qtd = parseFloat(tr.querySelector('.peca-qtd').value) || 0;
-    if (nome && qtd > 0) pecas.push({ nome, quantidade: qtd });
+    const valorUnitario = parseFloat(tr.querySelector('.peca-valor').value) || 0;
+    if (nome && qtd > 0) pecas.push({ nome, quantidade: qtd, valorUnitario });
   });
   return pecas;
 }
 
 async function salvarOS() {
   const id = document.getElementById('osId').value;
+  const valorTotal = calcularOrcamento();
   const registro = {
     numero_os: document.getElementById('numeroOS').value,
     orcamento: document.getElementById('orcamento').value,
     cliente_id: document.getElementById('clienteSelect').value || null,
     equipamento_id: document.getElementById('equipamentoSelect').value || null,
     status: document.getElementById('status').value,
-    valor: document.getElementById('valor').value,
+    valor: valorTotal.toFixed(2),
+    mao_de_obra: parseFloat(document.getElementById('maoDeObra').value) || 0,
     descricao_defeito: document.getElementById('descricaoDefeito').value,
     causa: document.getElementById('causa').value,
     servico_realizado: document.getElementById('servicoRealizado').value,
@@ -194,7 +270,7 @@ async function salvarOS() {
     for (const p of pecasInformadas) {
       const pecaCasada = await encontrarPecaPorNome(p.nome);
       await supabaseClient.from('os_pecas').insert({
-        os_id: id, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade
+        os_id: id, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade, valor_unitario: p.valorUnitario
       });
     }
     if (pecasInformadas.length > 0) {
@@ -207,7 +283,7 @@ async function salvarOS() {
     for (const p of pecasInformadas) {
       const pecaCasada = await encontrarPecaPorNome(p.nome);
       await supabaseClient.from('os_pecas').insert({
-        os_id: osIdFinal, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade
+        os_id: osIdFinal, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade, valor_unitario: p.valorUnitario
       });
       if (pecaCasada) {
         const novaQtd = (parseFloat(pecaCasada.quantidade) || 0) - p.quantidade;
@@ -229,6 +305,23 @@ async function encontrarPecaPorNome(nome) {
   return data && data.length ? data[0] : null;
 }
 
+function preencherServicoAutomatico() {
+  const pecas = coletarPecasDoFormulario();
+  const causa = document.getElementById('causa').value.trim();
+
+  if (pecas.length === 0) {
+    alert('Adicione peças na lista antes de gerar o texto automático.');
+    return;
+  }
+
+  const listaPecas = pecas.map(p => `${p.nome} (${p.quantidade} un)`).join(', ');
+  let texto = `Realizada substituição de: ${listaPecas}.`;
+  if (causa) texto += ` Causa identificada: ${causa}.`;
+  texto += ' Equipamento testado e aprovado após o reparo.';
+
+  document.getElementById('servicoRealizado').value = texto;
+}
+
 function limparForm() {
   document.getElementById('tituloForm').textContent = 'Nova Ordem de Serviço';
   document.getElementById('osId').value = '';
@@ -238,6 +331,8 @@ function limparForm() {
   document.getElementById('clienteSelect').value = '';
   document.getElementById('equipamentoSelect').innerHTML = '<option value="">Selecione o cliente primeiro</option>';
   document.getElementById('tabelaPecasUsadas').innerHTML = '';
+  document.getElementById('btnImprimir').style.display = 'none';
+  document.getElementById('btnOrcamento').style.display = 'none';
 }
 
 // Orçamento acompanha automaticamente o número da OS

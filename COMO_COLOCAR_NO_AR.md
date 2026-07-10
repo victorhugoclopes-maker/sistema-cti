@@ -16,6 +16,7 @@ Sistema simples em HTML/JS puro — sem necessidade de instalar nada no computad
 3. Clique em **Run** — isso cria as tabelas de clientes, equipamentos e ordens de serviço
 4. Repita o mesmo processo com o arquivo `schema_estoque.sql` (New query > colar > Run) — isso adiciona as tabelas de estoque de peças
 5. Repita novamente com o arquivo `schema_vendas.sql` — isso adiciona as tabelas de vendas
+6. Repita com o arquivo `schema_orcamento.sql` — adiciona os campos de orçamento automático
 
 ## Passo 3 — Pegar as chaves de acesso
 

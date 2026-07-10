@@ -68,6 +68,7 @@
 
     <div class="card">
       <h2>Clientes Cadastrados</h2>
+      <input type="text" id="buscaCliente" placeholder="🔍 Buscar por nome, empresa ou telefone..." oninput="filtrarClientes()" style="margin-bottom:14px;">
       <table>
         <thead><tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Equipamentos</th></tr></thead>
         <tbody id="tabelaClientes"></tbody>
@@ -104,8 +105,9 @@ let clientesParaImportar = [];
 const MAPA_COLUNAS = {
   nome: ['nome', 'cliente', 'razao social', 'razão social', 'nome do cliente', 'rede', 'rede / grupo', 'rede/grupo', 'grupo'],
   nomeFilial: ['nome da filial', 'filial', 'unidade', 'loja'],
-  empresa: ['empresa', 'nome fantasia', 'fantasia', 'empresa / cnpj', 'empresa/cnpj', 'cnpj'],
-  telefone: ['telefone', 'whatsapp', 'fone'],
+  empresa: ['empresa', 'nome fantasia', 'fantasia', 'empresa / cnpj', 'empresa/cnpj', 'razao social', 'razão social'],
+  cnpj: ['cnpj'],
+  telefone: ['telefone', 'whatsapp', 'fone', 'telefone / cel.', 'telefone/cel.', 'telefone / cel'],
   celular: ['celular'],
   contatoPessoa: ['contato'],
   email: ['e-mail', 'email'],
@@ -185,9 +187,13 @@ function processarPlanilha() {
           const observacoesBase = mapeamento.observacoes ? (linha[mapeamento.observacoes] || '').toString().trim() : '';
           const observacoesFinal = [observacoesBase, ...extras].filter(Boolean).join(' | ');
 
+          const razaoSocial = mapeamento.empresa ? (linha[mapeamento.empresa] || '').toString().trim() : '';
+          const cnpj = mapeamento.cnpj ? (linha[mapeamento.cnpj] || '').toString().trim() : '';
+          const empresaFinal = cnpj ? `${razaoSocial} — ${cnpj}` : razaoSocial;
+
           return {
             nome: nomeFinal,
-            empresa: mapeamento.empresa ? (linha[mapeamento.empresa] || '').toString().trim() : '',
+            empresa: empresaFinal,
             telefone,
             endereco: mapeamento.endereco ? (linha[mapeamento.endereco] || '').toString().trim() : '',
             observacoes: observacoesFinal,
@@ -231,19 +237,40 @@ async function confirmarImportClientes() {
 
 let clienteAtualId = null;
 
+let todosClientesCache = [];
+
 async function carregarClientes() {
   const { data } = await supabaseClient.from('clientes').select('*, equipamentos(id)').order('nome');
+  todosClientesCache = data || [];
+  renderizarTabelaClientes(todosClientesCache);
+}
+
+function renderizarTabelaClientes(lista) {
   const tbody = document.getElementById('tabelaClientes');
   tbody.innerHTML = '';
-  (data || []).forEach(c => {
+  lista.forEach(c => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${c.nome}</td><td>${c.empresa || '-'}</td><td>${c.telefone || '-'}</td><td>${c.equipamentos?.length || 0}</td>`;
     tr.onclick = () => abrirCliente(c);
     tbody.appendChild(tr);
   });
-  if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhum cliente cadastrado</td></tr>';
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhum cliente encontrado</td></tr>';
   }
+}
+
+function filtrarClientes() {
+  const termo = document.getElementById('buscaCliente').value.trim().toLowerCase();
+  if (!termo) {
+    renderizarTabelaClientes(todosClientesCache);
+    return;
+  }
+  const filtrados = todosClientesCache.filter(c =>
+    (c.nome || '').toLowerCase().includes(termo) ||
+    (c.empresa || '').toLowerCase().includes(termo) ||
+    (c.telefone || '').toLowerCase().includes(termo)
+  );
+  renderizarTabelaClientes(filtrados);
 }
 
 function abrirCliente(c) {

@@ -2,8 +2,8 @@
 // CONFIGURAÇÃO — preencha com os dados do seu projeto Supabase
 // (Project Settings > API)
 // ============================================
-const SUPABASE_URL = 'https://owtnikelnwzmirgnvety.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93dG5pa2Vsbnd6bWlyZ252ZXR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1NDEwNDAsImV4cCI6MjA5OTExNzA0MH0.1VUYAN6uq7AneDPyD7SUrIGOCn0UsuRCy-6bYnYY5_k';
+const SUPABASE_URL = 'COLE_AQUI_SUA_SUPABASE_URL';
+const SUPABASE_ANON_KEY = 'COLE_AQUI_SUA_SUPABASE_ANON_KEY';
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 

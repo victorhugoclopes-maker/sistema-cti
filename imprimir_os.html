@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Imprimir OS</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #000; margin: 0; padding: 20px; }
+  .folha { max-width: 800px; margin: 0 auto; border: 2px solid #000; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; }
+  .rotulo { font-weight: bold; width: 110px; background: #f5f5f5; }
+  .rotulo-pequeno { font-weight: bold; width: 90px; background: #f5f5f5; }
+  .titulo-secao { text-align: center; font-weight: bold; background: #eee; padding: 5px; }
+  .cabecalho-topo td { border: none; }
+  .logo-caixa { width: 55%; padding: 10px; }
+  .logo-caixa .nome-cti { font-size: 26px; font-weight: 900; color: #cc0000; font-style: italic; }
+  .logo-caixa .subnome { font-size: 11px; font-weight: bold; }
+  .logo-caixa .slogan { font-size: 10px; font-style: italic; }
+  .dados-entrada { width: 45%; }
+  .dados-entrada td { border: 1px solid #000; }
+  .dados-entrada .campo { font-weight: bold; }
+  input[type=text], .editavel {
+    border: none; border-bottom: 1px dotted #999; width: 100%; font-family: Arial; font-size: 12px;
+    padding: 1px 2px; background: transparent;
+  }
+  .aviso { background: #fdd; color: #b00; font-weight: bold; text-align: center; padding: 6px; font-size: 11px; }
+  .assinatura-linha td { height: 30px; }
+  .botoes { max-width: 800px; margin: 16px auto; text-align: center; }
+  .botoes button {
+    background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px;
+    font-size: 14px; cursor: pointer; margin: 0 6px;
+  }
+  @media print {
+    .botoes { display: none; }
+    body { padding: 0; }
+    .folha { border: 1px solid #000; }
+  }
+</style>
+</head>
+<body>
+
+<div class="botoes">
+  <button onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button>
+  <button onclick="window.close()" style="background:#6b7280;">Fechar</button>
+</div>
+
+<div class="folha" id="folha">
+  <table class="cabecalho-topo">
+    <tr>
+      <td class="logo-caixa">
+        <span class="nome-cti">CTI</span>
+        <div class="subnome">MÁQUINAS E EQUIPAMENTOS<br><span class="slogan">Tudo para o seu comércio</span></div>
+      </td>
+      <td class="dados-entrada">
+        <table>
+          <tr><td class="campo">Ordem de Serviço / Entrada:</td><td id="fNumeroOS"></td></tr>
+          <tr><td class="campo">Data de entrada:</td><td id="fDataEntrada"></td></tr>
+          <tr><td class="campo">Data de Saída:</td><td id="fDataSaida"></td></tr>
+          <tr><td class="campo">Horário / Entrada:</td><td>Saída: <span class="editavel" contenteditable="true"></span></td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <div class="titulo-secao">Assistência Técnica Autorizada Permissão 70000387</div>
+  <table>
+    <tr><td class="rotulo">Empresa</td><td>LLEBESAI REPARAÇÃO DE MÁQUINAS LTDA</td><td class="rotulo-pequeno">CNPJ</td><td>07.606.352.0001.34</td></tr>
+    <tr><td class="rotulo">Endereço</td><td>RUA TAJURI, 364</td><td class="rotulo-pequeno">Bairro</td><td>VICENTE DE CARVALHO</td></tr>
+    <tr><td class="rotulo">Cidade/ UF</td><td>RIO DE JANEIRO - RJ</td><td class="rotulo-pequeno">CEP</td><td>21371-100</td></tr>
+    <tr><td class="rotulo">Nome</td><td>FRANKLIN OLIVEIRA / VERA LUCIA</td><td class="rotulo-pequeno">Celular</td><td>99946-2687</td></tr>
+    <tr><td class="rotulo">Email</td><td>veractidasbalancas@gmail.com</td><td class="rotulo-pequeno">Fone</td><td>3301-5703</td></tr>
+  </table>
+
+  <div class="titulo-secao">CLIENTE</div>
+  <table>
+    <tr><td class="rotulo">Empresa:</td><td id="fClienteEmpresa"></td><td class="rotulo-pequeno">CNPJ</td><td class="editavel" contenteditable="true"></td></tr>
+    <tr><td class="rotulo">Endereço:</td><td id="fClienteEndereco"></td><td class="rotulo-pequeno">Bairro</td><td class="editavel" contenteditable="true"></td></tr>
+    <tr><td class="rotulo">Cidade/UF</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">CEP</td><td class="editavel" contenteditable="true"></td></tr>
+    <tr><td class="rotulo">Nome:</td><td id="fClienteNome"></td><td class="rotulo-pequeno">Celular</td><td id="fClienteTelefone"></td></tr>
+    <tr><td class="rotulo">Email:</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Fone</td><td class="editavel" contenteditable="true"></td></tr>
+  </table>
+
+  <div class="titulo-secao">Descrição da Balança e ou Equipamento</div>
+  <table>
+    <tr><td class="rotulo">Produto</td><td id="fProduto"></td><td class="rotulo-pequeno">Marca</td><td id="fMarca"></td><td class="rotulo-pequeno">Capacidade</td><td id="fCapacidade"></td></tr>
+    <tr><td class="rotulo">Lacre anterior</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Inventario</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Nº de Série</td><td id="fSerie"></td></tr>
+    <tr><td class="rotulo">Lacre Nº</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Selo Nº</td><td class="editavel" contenteditable="true"></td><td class="rotulo-pequeno">Orçamento</td><td id="fOrcamento"></td></tr>
+  </table>
+
+  <table>
+    <tr><td class="rotulo" style="width:140px;">Descrição do Defeito:</td><td id="fDefeito"></td></tr>
+    <tr><td class="rotulo">Peças substituídas:</td><td id="fPecas"></td></tr>
+    <tr class="assinatura-linha"><td colspan="2"></td></tr>
+    <tr class="assinatura-linha"><td colspan="2"></td></tr>
+  </table>
+
+  <table>
+    <tr>
+      <td style="width:60%;">Aprovado pelo cliente: <span class="editavel" contenteditable="true" style="display:inline-block;width:60%;"></span></td>
+      <td>RG: <span class="editavel" contenteditable="true" style="display:inline-block;width:60%;"></span></td>
+    </tr>
+    <tr>
+      <td>Executado Pelo Técnico <span class="editavel" contenteditable="true" style="display:inline-block;width:50%;"></span></td>
+      <td>RG: <span class="editavel" contenteditable="true" style="display:inline-block;width:40%;"></span> &nbsp; ( &nbsp;<span contenteditable="true">&nbsp;</span>&nbsp; ) Oficina &nbsp; ( &nbsp;<span contenteditable="true">&nbsp;</span>&nbsp; ) Local</td>
+    </tr>
+  </table>
+
+  <div class="aviso">ATENDIMENTO EXTERNO NÃO AUTORIZADO SERÁ COBRADO O VALOR DA VISITA TÉCNICA – R$ 190,00</div>
+</div>
+
+<script src="js/config.js"></script>
+<script>
+function formatarDataCurta(d) {
+  if (!d) return '';
+  const [ano, mes, dia] = d.split('-');
+  return `${dia}/${mes}/${ano}`;
+}
+
+async function carregarOSParaImpressao() {
+  await protegerPagina();
+  const params = new URLSearchParams(window.location.search);
+  const osId = params.get('id');
+  if (!osId) { document.body.innerHTML = '<p style="padding:20px;">Nenhuma OS selecionada.</p>'; return; }
+
+  const { data: os } = await supabaseClient
+    .from('ordens_servico')
+    .select('*, clientes(nome, empresa, endereco, telefone), equipamentos(tipo, marca, capacidade, numero_serie)')
+    .eq('id', osId)
+    .single();
+
+  if (!os) { document.body.innerHTML = '<p style="padding:20px;">OS não encontrada.</p>'; return; }
+
+  document.getElementById('fNumeroOS').textContent = os.numero_os || '';
+  document.getElementById('fDataEntrada').textContent = formatarDataCurta(os.data_abertura);
+  document.getElementById('fDataSaida').textContent = formatarDataCurta(os.data_conclusao);
+
+  document.getElementById('fClienteEmpresa').textContent = os.clientes?.empresa || '';
+  document.getElementById('fClienteEndereco').textContent = os.clientes?.endereco || '';
+  document.getElementById('fClienteNome').textContent = os.clientes?.nome || '';
+  document.getElementById('fClienteTelefone').textContent = os.clientes?.telefone || '';
+
+  document.getElementById('fProduto').textContent = os.equipamentos?.tipo || '';
+  document.getElementById('fMarca').textContent = os.equipamentos?.marca || '';
+  document.getElementById('fCapacidade').textContent = os.equipamentos?.capacidade || '';
+  document.getElementById('fSerie').textContent = os.equipamentos?.numero_serie || '';
+  document.getElementById('fOrcamento').textContent = os.orcamento || '';
+  document.getElementById('fDefeito').textContent = os.descricao_defeito || '';
+
+  const { data: pecas } = await supabaseClient.from('os_pecas').select('nome_peca, quantidade').eq('os_id', osId);
+  document.getElementById('fPecas').textContent = (pecas || []).map(p => `${p.nome_peca} (x${p.quantidade})`).join(', ');
+}
+
+carregarOSParaImpressao();
+</script>
+</body>
+</html>
