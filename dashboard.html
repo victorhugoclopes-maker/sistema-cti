@@ -16,6 +16,7 @@
       <a href="os.html">Ordens de Serviço</a>
       <a href="estoque.html">Estoque</a>
       <a href="vendas.html">Vendas</a>
+      <a href="relatorios.html">Relatórios</a>
       <a href="exportar.html">Exportar</a>
       <a href="validador.html">Validador MGV</a>
       <a href="#" onclick="fazerLogout()">Sair</a>
@@ -35,6 +36,23 @@
           <p style="font-size:28px;font-weight:bold;" id="qtdClientes">-</p>
         </div>
       </div>
+    </div>
+
+    <div class="card" id="cardCalibracaoVencendo" style="display:none;">
+      <h2>📅 Calibrações vencendo nos próximos 30 dias</h2>
+      <table>
+        <thead><tr><th>Cliente</th><th>Equipamento</th><th>Vence em</th></tr></thead>
+        <tbody id="tabelaCalibracaoVencendo"></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="cardCarroIncompleto" style="display:none;">
+      <h2>🚗 Peças faltando no carro</h2>
+      <table>
+        <thead><tr><th>Peça</th><th>No carro</th><th>Meta</th></tr></thead>
+        <tbody id="tabelaCarroIncompleto"></tbody>
+      </table>
+      <div class="acoes"><button onclick="window.location.href='estoque.html'">Ir pro Estoque</button></div>
     </div>
 
     <div class="card" id="cardSemContato" style="display:none;">
@@ -94,7 +112,51 @@
   }
 
   await carregarClientesSemContato();
+  await carregarCalibracaoVencendo();
+  await carregarCarroIncompleto();
 })();
+
+async function carregarCalibracaoVencendo() {
+  const hoje = new Date();
+  const em30dias = new Date();
+  em30dias.setDate(hoje.getDate() + 30);
+
+  const { data } = await supabaseClient
+    .from('equipamentos')
+    .select('tipo, modelo, numero_serie, proxima_calibracao, clientes(nome)')
+    .not('proxima_calibracao', 'is', null)
+    .lte('proxima_calibracao', em30dias.toISOString().split('T')[0])
+    .order('proxima_calibracao');
+
+  const lista = (data || []).filter(e => new Date(e.proxima_calibracao) >= new Date(hoje.toDateString()) || new Date(e.proxima_calibracao) < hoje);
+  if (lista.length === 0) return;
+
+  document.getElementById('cardCalibracaoVencendo').style.display = 'block';
+  const tbody = document.getElementById('tabelaCalibracaoVencendo');
+  tbody.innerHTML = '';
+  lista.forEach(e => {
+    const vencida = new Date(e.proxima_calibracao) < hoje;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${e.clientes?.nome || '-'}</td><td>${e.tipo || ''} ${e.modelo || ''} (${e.numero_serie || 's/n'})</td>
+      <td>${formatarData(e.proxima_calibracao)}${vencida ? ' ⚠️ VENCIDA' : ''}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function carregarCarroIncompleto() {
+  const { data } = await supabaseClient.from('pecas').select('nome, quantidade_carro, estoque_ideal_carro').gt('estoque_ideal_carro', 0);
+  const faltando = (data || []).filter(p => (p.quantidade_carro || 0) < p.estoque_ideal_carro);
+  if (faltando.length === 0) return;
+
+  document.getElementById('cardCarroIncompleto').style.display = 'block';
+  const tbody = document.getElementById('tabelaCarroIncompleto');
+  tbody.innerHTML = '';
+  faltando.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.nome}</td><td>${p.quantidade_carro || 0}</td><td>${p.estoque_ideal_carro}</td>`;
+    tbody.appendChild(tr);
+  });
+}
 
 async function carregarClientesSemContato() {
   const { data: clientes } = await supabaseClient

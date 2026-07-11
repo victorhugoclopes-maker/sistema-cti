@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Imprimir OS</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #000; margin: 0; padding: 20px; }
@@ -44,6 +45,7 @@
 
 <div class="botoes">
   <button onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button>
+  <button onclick="baixarPDF()" style="background:#16a34a;">⬇️ Baixar PDF</button>
   <button onclick="window.close()" style="background:#6b7280;">Fechar</button>
 </div>
 
@@ -119,6 +121,20 @@ function formatarDataCurta(d) {
   return `${dia}/${mes}/${ano}`;
 }
 
+let numeroOSAtual = '';
+
+function baixarPDF() {
+  const elemento = document.getElementById('folha');
+  const nomeArquivo = `OS_${numeroOSAtual || 'sem_numero'}.pdf`;
+  html2pdf().set({
+    margin: 10,
+    filename: nomeArquivo,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2 },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  }).from(elemento).save();
+}
+
 async function carregarOSParaImpressao() {
   await protegerPagina();
   const params = new URLSearchParams(window.location.search);
@@ -134,12 +150,13 @@ async function carregarOSParaImpressao() {
   if (!os) { document.body.innerHTML = '<p style="padding:20px;">OS não encontrada.</p>'; return; }
 
   document.getElementById('fNumeroOS').textContent = os.numero_os || '';
+  numeroOSAtual = os.numero_os || '';
   document.getElementById('fDataEntrada').textContent = formatarDataCurta(os.data_abertura);
   document.getElementById('fDataSaida').textContent = formatarDataCurta(os.data_conclusao);
 
   document.getElementById('fClienteEmpresa').textContent = os.clientes?.empresa || '';
   document.getElementById('fClienteEndereco').textContent = os.clientes?.endereco || '';
-  document.getElementById('fClienteNome').textContent = os.clientes?.nome || '';
+  document.getElementById('fClienteNome').textContent = os.clientes?.nome || os.cliente_nome_texto || '';
   document.getElementById('fClienteTelefone').textContent = os.clientes?.telefone || '';
 
   document.getElementById('fProduto').textContent = os.equipamentos?.tipo || '';

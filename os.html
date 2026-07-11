@@ -17,6 +17,7 @@
       <a href="os.html" class="ativo">Ordens de Serviço</a>
       <a href="estoque.html">Estoque</a>
       <a href="vendas.html">Vendas</a>
+      <a href="relatorios.html">Relatórios</a>
       <a href="exportar.html">Exportar</a>
       <a href="validador.html">Validador MGV</a>
       <a href="#" onclick="fazerLogout()">Sair</a>
@@ -73,12 +74,28 @@
         </div>
         <div><label>Mão de obra (R$)</label><input type="number" id="maoDeObra" min="0" step="0.01" value="0" onchange="calcularOrcamento()"></div>
       </div>
-      <label>Descrição do defeito</label>
-      <textarea id="descricaoDefeito"></textarea>
+      <label style="margin-top:8px;">Preenchimento rápido</label>
+      <div class="acoes" style="margin-bottom:10px;">
+        <button type="button" class="secundario" onclick="preencherRapido('calibracao')">⚖️ Calibração</button>
+        <button type="button" class="secundario" onclick="preencherRapido('celula')">🔧 Célula de carga</button>
+        <button type="button" class="secundario" onclick="preencherRapido('placa')">🔌 Placa eletrônica</button>
+        <button type="button" class="secundario" onclick="preencherRapido('bateria')">🔋 Bateria</button>
+        <button type="button" class="secundario" onclick="preencherRapido('preventiva')">🧹 Manutenção preventiva</button>
+        <button type="button" class="secundario" onclick="preencherRapido('visita')">🚗 Visita sem reparo</button>
+      </div>
+      <label>Descrição do defeito <button type="button" class="secundario" onclick="abrirGerenciadorFrases()" style="font-size:11px;padding:3px 8px;margin-left:6px;">⚙️ Gerenciar frases prontas</button></label>
+      <div style="position:relative;">
+        <textarea id="descricaoDefeito" oninput="mostrarSugestoes('descricaoDefeito', 'defeito')" onblur="setTimeout(() => esconderSugestoes('sugestoesDefeito'), 200)"></textarea>
+        <div id="sugestoesDefeito" class="caixa-sugestoes" style="display:none;"></div>
+      </div>
       <label>Causa</label>
-      <input id="causa" placeholder="Ex: célula de carga, placa eletrônica, fonte, display...">
+      <input id="causa" list="listaCausas" placeholder="Ex: célula de carga, placa eletrônica, fonte, display...">
+      <datalist id="listaCausas"></datalist>
       <label>Serviço realizado</label>
-      <textarea id="servicoRealizado"></textarea>
+      <div style="position:relative;">
+        <textarea id="servicoRealizado" oninput="mostrarSugestoes('servicoRealizado', 'servico')" onblur="setTimeout(() => esconderSugestoes('sugestoesServico'), 200)"></textarea>
+        <div id="sugestoesServico" class="caixa-sugestoes" style="display:none;"></div>
+      </div>
       <button type="button" class="secundario" onclick="preencherServicoAutomatico()" style="margin-bottom:10px;">✏️ Preencher automaticamente com base nas peças</button>
 
       <label style="margin-top:8px;">Peças utilizadas</label>
@@ -114,8 +131,86 @@
     </div>
   </div>
 
+<div id="modalFrases" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:100;">
+  <div style="background:white;max-width:600px;margin:40px auto;padding:20px;border-radius:8px;max-height:80vh;overflow-y:auto;">
+    <h2>Gerenciar Frases Prontas</h2>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:14px;">Cadastre frases que aparecem como sugestão enquanto você digita nos campos de Causa, Descrição do Defeito e Serviço Realizado.</p>
+
+    <div class="form-grid">
+      <div>
+        <label>Campo</label>
+        <select id="novaFraseCampo">
+          <option value="causa">Causa</option>
+          <option value="defeito">Descrição do Defeito</option>
+          <option value="servico">Serviço Realizado</option>
+        </select>
+      </div>
+      <div><label>Texto da frase</label><input id="novaFraseTexto" placeholder="Digite a frase pronta"></div>
+    </div>
+    <div class="acoes"><button onclick="salvarNovaFrase()">+ Adicionar Frase</button></div>
+
+    <h2 style="margin-top:20px;">Frases cadastradas</h2>
+    <div id="listaFrasesCadastradas"></div>
+
+    <button class="secundario" onclick="document.getElementById('modalFrases').style.display='none'" style="margin-top:14px;">Fechar</button>
+  </div>
+</div>
+
 <script src="js/config.js"></script>
 <script>
+const PRESETS_RAPIDOS = {
+  calibracao: {
+    causa: 'Descalibração',
+    defeito: 'Balança apresentando peso fora do padrão / descalibrada.',
+    servico: 'Realizada calibração conforme padrão de referência. Equipamento testado e aprovado.',
+    peca: null,
+  },
+  celula: {
+    causa: 'Célula de carga',
+    defeito: 'Peso instável, oscilando ou zerando sozinho.',
+    servico: '',
+    peca: 'Célula de carga',
+  },
+  placa: {
+    causa: 'Placa eletrônica',
+    defeito: 'Display não liga, travando ou apresentando erro.',
+    servico: '',
+    peca: 'Placa eletrônica',
+  },
+  bateria: {
+    causa: 'Bateria',
+    defeito: 'Balança não liga ou não segura carga.',
+    servico: '',
+    peca: 'Bateria',
+  },
+  preventiva: {
+    causa: 'Manutenção preventiva',
+    defeito: 'Manutenção preventiva agendada.',
+    servico: 'Realizada limpeza, lubrificação e testes gerais no equipamento.',
+    peca: null,
+  },
+  visita: {
+    causa: '',
+    defeito: 'Visita técnica solicitada pelo cliente.',
+    servico: 'Visita realizada, equipamento testado, sem necessidade de reparo no momento.',
+    peca: null,
+  },
+};
+
+function preencherRapido(tipo) {
+  const preset = PRESETS_RAPIDOS[tipo];
+  if (!preset) return;
+  document.getElementById('causa').value = preset.causa;
+  document.getElementById('descricaoDefeito').value = preset.defeito;
+  if (preset.servico) document.getElementById('servicoRealizado').value = preset.servico;
+  if (preset.peca) {
+    adicionarLinhaPeca(preset.peca, 1, 0);
+    const linhas = document.querySelectorAll('#tabelaPecasUsadas tr');
+    const ultimaLinha = linhas[linhas.length - 1];
+    if (ultimaLinha) buscarPrecoPeca(ultimaLinha.querySelector('.peca-nome'));
+  }
+}
+
 let osParaImportar = [];
 let clientesMapaNomes = {}; // nome em minúsculo -> id
 
@@ -199,6 +294,7 @@ async function processarPlanilhaOS() {
           numero_os: numeroOS,
           orcamento: mapa.orcamento ? (linha[mapa.orcamento] || '').toString().trim() : numeroOS,
           cliente_id: clienteId,
+          cliente_nome_texto: clienteId ? null : nomeCliente, // guarda o nome se não achou vínculo, pra não perder a informação
           cliente_nome_planilha: nomeCliente,
           status: mapa.status ? normalizarStatus(linha[mapa.status]) : 'concluida',
           valor: mapa.valor ? parseFloat(linha[mapa.valor]) || 0 : 0,
@@ -276,6 +372,92 @@ async function carregarEquipamentosDoCliente() {
     equipamentosCache.map(e => `<option value="${e.id}">${e.tipo || ''} ${e.modelo || ''} (${e.numero_serie || 's/n'})</option>`).join('');
 }
 
+let frasesCache = { causa: [], defeito: [], servico: [] };
+
+async function carregarFrasesRapidas() {
+  const { data } = await supabaseClient.from('frases_rapidas').select('*').order('texto');
+  frasesCache = { causa: [], defeito: [], servico: [] };
+  (data || []).forEach(f => {
+    if (frasesCache[f.campo]) frasesCache[f.campo].push(f);
+  });
+
+  // popula o datalist de causa (autocomplete nativo do navegador)
+  const datalist = document.getElementById('listaCausas');
+  datalist.innerHTML = frasesCache.causa.map(f => `<option value="${f.texto}">`).join('');
+}
+
+const MAPA_CAIXA_SUGESTAO = { defeito: 'sugestoesDefeito', servico: 'sugestoesServico' };
+
+function mostrarSugestoes(idCampo, tipoCampo) {
+  const valor = document.getElementById(idCampo).value.trim().toLowerCase();
+  const caixaId = MAPA_CAIXA_SUGESTAO[tipoCampo];
+  const caixa = document.getElementById(caixaId);
+
+  if (!valor) { caixa.style.display = 'none'; return; }
+
+  const opcoes = (frasesCache[tipoCampo] || []).filter(f => f.texto.toLowerCase().includes(valor)).slice(0, 6);
+  if (opcoes.length === 0) { caixa.style.display = 'none'; return; }
+
+  caixa.innerHTML = opcoes.map(f => `<div class="item-sugestao" onclick="usarSugestao('${idCampo}', '${caixaId}', ${JSON.stringify(f.texto).replace(/"/g, '&quot;')})">${f.texto}</div>`).join('');
+  caixa.style.display = 'block';
+}
+
+function usarSugestao(idCampo, caixaId, texto) {
+  document.getElementById(idCampo).value = texto;
+  document.getElementById(caixaId).style.display = 'none';
+}
+
+function esconderSugestoes(caixaId) {
+  document.getElementById(caixaId).style.display = 'none';
+}
+
+function abrirGerenciadorFrases() {
+  document.getElementById('modalFrases').style.display = 'block';
+  renderizarListaFrases();
+}
+
+function renderizarListaFrases() {
+  const container = document.getElementById('listaFrasesCadastradas');
+  const nomesLabel = { causa: 'Causa', defeito: 'Descrição do Defeito', servico: 'Serviço Realizado' };
+  container.innerHTML = '';
+
+  ['causa', 'defeito', 'servico'].forEach(campo => {
+    if (frasesCache[campo].length === 0) return;
+    const titulo = document.createElement('p');
+    titulo.style.cssText = 'font-weight:bold;margin-top:12px;font-size:13px;color:#374151;';
+    titulo.textContent = nomesLabel[campo];
+    container.appendChild(titulo);
+
+    frasesCache[campo].forEach(f => {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:#f9fafb;border-radius:4px;margin-bottom:4px;font-size:13px;';
+      div.innerHTML = `<span>${f.texto}</span><button class="perigo" style="padding:2px 8px;font-size:11px;" onclick="excluirFrase('${f.id}')">X</button>`;
+      container.appendChild(div);
+    });
+  });
+
+  if (Object.values(frasesCache).every(arr => arr.length === 0)) {
+    container.innerHTML = '<p class="vazio">Nenhuma frase cadastrada ainda.</p>';
+  }
+}
+
+async function salvarNovaFrase() {
+  const campo = document.getElementById('novaFraseCampo').value;
+  const texto = document.getElementById('novaFraseTexto').value.trim();
+  if (!texto) { alert('Digite o texto da frase.'); return; }
+
+  await supabaseClient.from('frases_rapidas').insert({ campo, texto });
+  document.getElementById('novaFraseTexto').value = '';
+  await carregarFrasesRapidas();
+  renderizarListaFrases();
+}
+
+async function excluirFrase(id) {
+  await supabaseClient.from('frases_rapidas').delete().eq('id', id);
+  await carregarFrasesRapidas();
+  renderizarListaFrases();
+}
+
 let todasOSCache = [];
 
 async function carregarOS() {
@@ -292,7 +474,8 @@ function renderizarTabelaOS(lista) {
   tbody.innerHTML = '';
   lista.forEach(os => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.clientes?.nome || '-'}</td>
+    const nomeCliente = os.clientes?.nome || (os.cliente_nome_texto ? `${os.cliente_nome_texto} ⚠️` : '-');
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${nomeCliente}</td>
       <td><span class="badge ${os.status}">${os.status.replace('_',' ')}</span></td>
       <td>${formatarData(os.data_abertura)}</td>`;
     tr.onclick = () => abrirOS(os);
@@ -309,6 +492,7 @@ function filtrarOS() {
   const filtradas = todasOSCache.filter(os =>
     (os.numero_os || '').toLowerCase().includes(termo) ||
     (os.clientes?.nome || '').toLowerCase().includes(termo) ||
+    (os.cliente_nome_texto || '').toLowerCase().includes(termo) ||
     (os.status || '').toLowerCase().includes(termo)
   );
   renderizarTabelaOS(filtradas);
@@ -448,12 +632,15 @@ async function salvarOS() {
         os_id: osIdFinal, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade, valor_unitario: p.valorUnitario
       });
       if (pecaCasada) {
-        const novaQtd = (parseFloat(pecaCasada.quantidade) || 0) - p.quantidade;
-        await supabaseClient.from('pecas').update({ quantidade: novaQtd }).eq('id', pecaCasada.id);
+        const novaQtdCarro = (parseFloat(pecaCasada.quantidade_carro) || 0) - p.quantidade;
+        await supabaseClient.from('pecas').update({ quantidade_carro: novaQtdCarro }).eq('id', pecaCasada.id);
         await supabaseClient.from('movimentacoes_estoque').insert({
           peca_id: pecaCasada.id, tipo: 'saida', quantidade: p.quantidade,
-          motivo: `OS ${registro.numero_os}`, os_id: osIdFinal
+          motivo: `OS ${registro.numero_os} (carro)`, os_id: osIdFinal
         });
+        if (novaQtdCarro < 0) {
+          alert(`Atenção: o carro ficou com estoque negativo de "${pecaCasada.nome}" — não havia quantidade suficiente. Reabasteça o carro assim que possível.`);
+        }
       }
     }
   }
@@ -506,6 +693,7 @@ document.getElementById('numeroOS').addEventListener('input', (e) => {
   await protegerPagina();
   await carregarClientesSelect();
   await carregarOS();
+  await carregarFrasesRapidas();
 })();
 </script>
 </body>

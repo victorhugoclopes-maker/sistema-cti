@@ -144,3 +144,24 @@ tr:hover { background: #f9fafb; cursor: pointer; }
 }
 .linha-resultado.ok { background: #d1fae5; color: #065f46; }
 .linha-resultado.erro-item { background: #fee2e2; color: #991b1b; }
+
+.caixa-sugestoes {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 50;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.caixa-sugestoes .item-sugestao {
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+}
+.caixa-sugestoes .item-sugestao:hover { background: #f0f5ff; }

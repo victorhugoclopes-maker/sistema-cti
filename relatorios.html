@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Relatórios</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="relatorios.html" class="ativo">Relatórios</a>
+      <a href="exportar.html">Exportar</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Período</h2>
+      <div class="form-grid">
+        <div><label>Mês</label>
+          <select id="filtroMes">
+            <option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option>
+            <option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option>
+            <option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option>
+            <option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option>
+          </select>
+        </div>
+        <div><label>Ano</label><input type="number" id="filtroAno" value="2026"></div>
+      </div>
+      <button onclick="gerarRelatorio()">Gerar Relatório</button>
+    </div>
+
+    <div id="resultadoRelatorio" style="display:none;">
+      <div class="card">
+        <h2>Faturamento do Período</h2>
+        <div class="form-grid">
+          <div><p style="font-size:13px;color:#6b7280;">OS concluídas</p><p style="font-size:24px;font-weight:bold;" id="totalOS">-</p></div>
+          <div><p style="font-size:13px;color:#6b7280;">Vendas</p><p style="font-size:24px;font-weight:bold;" id="totalVendas">-</p></div>
+        </div>
+        <div class="form-grid" style="margin-top:10px;">
+          <div><p style="font-size:13px;color:#6b7280;">Total Geral</p><p style="font-size:28px;font-weight:bold;color:#2563eb;" id="totalGeral">-</p></div>
+          <div><p style="font-size:13px;color:#6b7280;">Ticket médio (venda)</p><p style="font-size:24px;font-weight:bold;" id="ticketMedio">-</p></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Faturamento por Empresa (Vendas)</h2>
+        <table>
+          <thead><tr><th>Empresa</th><th>Nº de vendas</th><th>Total</th></tr></thead>
+          <tbody id="tabelaPorEmpresa"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Peças mais usadas no período</h2>
+        <table>
+          <thead><tr><th>Peça</th><th>Quantidade total</th><th>Nº de vezes usada</th></tr></thead>
+          <tbody id="tabelaPecasMaisUsadas"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Clientes com mais movimento no período</h2>
+        <table>
+          <thead><tr><th>Cliente</th><th>OS</th><th>Vendas</th></tr></thead>
+          <tbody id="tabelaClientesTop"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+function moeda(v) { return 'R$ ' + Number(v || 0).toFixed(2).replace('.', ','); }
+
+async function gerarRelatorio() {
+  const mes = parseInt(document.getElementById('filtroMes').value);
+  const ano = parseInt(document.getElementById('filtroAno').value);
+  const inicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const fim = `${ano}-${String(mes).padStart(2,'0')}-${ultimoDia}`;
+
+  document.getElementById('resultadoRelatorio').style.display = 'block';
+
+  // OS concluídas no período
+  const { data: osPeriodo } = await supabaseClient
+    .from('ordens_servico')
+    .select('valor, cliente_id, clientes(nome), status, data_abertura')
+    .gte('data_abertura', inicio).lte('data_abertura', fim);
+
+  const osConcluidas = (osPeriodo || []).filter(os => os.status === 'concluida');
+  const totalOS = osConcluidas.reduce((soma, os) => soma + (parseFloat(os.valor) || 0), 0);
+  document.getElementById('totalOS').textContent = moeda(totalOS);
+
+  // Vendas no período
+  const { data: vendasPeriodo } = await supabaseClient
+    .from('vendas')
+    .select('valor_total, cliente_id, clientes(nome), empresa_id, empresas(nome), data_venda')
+    .gte('data_venda', inicio).lte('data_venda', fim);
+
+  const totalVendas = (vendasPeriodo || []).reduce((soma, v) => soma + (parseFloat(v.valor_total) || 0), 0);
+  document.getElementById('totalVendas').textContent = moeda(totalVendas);
+  document.getElementById('totalGeral').textContent = moeda(totalOS + totalVendas);
+  document.getElementById('ticketMedio').textContent = vendasPeriodo?.length ? moeda(totalVendas / vendasPeriodo.length) : moeda(0);
+
+  // Por empresa
+  const porEmpresa = {};
+  (vendasPeriodo || []).forEach(v => {
+    const nome = v.empresas?.nome || 'Sem empresa';
+    if (!porEmpresa[nome]) porEmpresa[nome] = { qtd: 0, total: 0 };
+    porEmpresa[nome].qtd++;
+    porEmpresa[nome].total += parseFloat(v.valor_total) || 0;
+  });
+  const tbodyEmpresa = document.getElementById('tabelaPorEmpresa');
+  tbodyEmpresa.innerHTML = '';
+  Object.entries(porEmpresa).forEach(([nome, dados]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${nome}</td><td>${dados.qtd}</td><td>${moeda(dados.total)}</td>`;
+    tbodyEmpresa.appendChild(tr);
+  });
+  if (Object.keys(porEmpresa).length === 0) {
+    tbodyEmpresa.innerHTML = '<tr><td colspan="3" class="vazio">Nenhuma venda no período</td></tr>';
+  }
+
+  // Peças mais usadas (OS + vendas)
+  const { data: osIds } = { data: (osPeriodo || []).map(o => o.cliente_id) };
+  const idsOSPeriodo = (osPeriodo || []).length ? await supabaseClient
+    .from('ordens_servico').select('id').gte('data_abertura', inicio).lte('data_abertura', fim) : { data: [] };
+
+  const pecasContagem = {};
+
+  if (idsOSPeriodo.data && idsOSPeriodo.data.length > 0) {
+    const { data: pecasOS } = await supabaseClient
+      .from('os_pecas').select('nome_peca, quantidade').in('os_id', idsOSPeriodo.data.map(o => o.id));
+    (pecasOS || []).forEach(p => {
+      const chave = p.nome_peca.trim().toLowerCase();
+      if (!pecasContagem[chave]) pecasContagem[chave] = { nome: p.nome_peca, qtd: 0, vezes: 0 };
+      pecasContagem[chave].qtd += parseFloat(p.quantidade) || 0;
+      pecasContagem[chave].vezes++;
+    });
+  }
+
+  const idsVendasPeriodo = (vendasPeriodo || []).map(v => v.venda_id || null);
+  if (vendasPeriodo && vendasPeriodo.length > 0) {
+    const { data: vendasComId } = await supabaseClient
+      .from('vendas').select('id').gte('data_venda', inicio).lte('data_venda', fim);
+    if (vendasComId && vendasComId.length > 0) {
+      const { data: itensVenda } = await supabaseClient
+        .from('vendas_itens').select('nome_item, quantidade').in('venda_id', vendasComId.map(v => v.id));
+      (itensVenda || []).forEach(item => {
+        const chave = item.nome_item.trim().toLowerCase();
+        if (!pecasContagem[chave]) pecasContagem[chave] = { nome: item.nome_item, qtd: 0, vezes: 0 };
+        pecasContagem[chave].qtd += parseFloat(item.quantidade) || 0;
+        pecasContagem[chave].vezes++;
+      });
+    }
+  }
+
+  const rankingPecas = Object.values(pecasContagem).sort((a, b) => b.qtd - a.qtd).slice(0, 10);
+  const tbodyPecas = document.getElementById('tabelaPecasMaisUsadas');
+  tbodyPecas.innerHTML = '';
+  rankingPecas.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.nome}</td><td>${p.qtd}</td><td>${p.vezes}</td>`;
+    tbodyPecas.appendChild(tr);
+  });
+  if (rankingPecas.length === 0) {
+    tbodyPecas.innerHTML = '<tr><td colspan="3" class="vazio">Nenhuma peça usada no período</td></tr>';
+  }
+
+  // Clientes com mais movimento
+  const clientesContagem = {};
+  (osPeriodo || []).forEach(os => {
+    const nome = os.clientes?.nome || 'Sem cliente';
+    if (!clientesContagem[nome]) clientesContagem[nome] = { os: 0, vendas: 0 };
+    clientesContagem[nome].os++;
+  });
+  (vendasPeriodo || []).forEach(v => {
+    const nome = v.clientes?.nome || 'Sem cliente';
+    if (!clientesContagem[nome]) clientesContagem[nome] = { os: 0, vendas: 0 };
+    clientesContagem[nome].vendas++;
+  });
+  const rankingClientes = Object.entries(clientesContagem)
+    .sort((a, b) => (b[1].os + b[1].vendas) - (a[1].os + a[1].vendas)).slice(0, 10);
+  const tbodyClientes = document.getElementById('tabelaClientesTop');
+  tbodyClientes.innerHTML = '';
+  rankingClientes.forEach(([nome, dados]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${nome}</td><td>${dados.os}</td><td>${dados.vendas}</td>`;
+    tbodyClientes.appendChild(tr);
+  });
+  if (rankingClientes.length === 0) {
+    tbodyClientes.innerHTML = '<tr><td colspan="3" class="vazio">Nenhum movimento no período</td></tr>';
+  }
+}
+
+(async () => {
+  await protegerPagina();
+  const hoje = new Date();
+  document.getElementById('filtroMes').value = hoje.getMonth() + 1;
+  document.getElementById('filtroAno').value = hoje.getFullYear();
+})();
+</script>
+</body>
+</html>

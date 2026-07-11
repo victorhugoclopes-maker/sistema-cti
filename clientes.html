@@ -17,6 +17,7 @@
       <a href="os.html">Ordens de Serviço</a>
       <a href="estoque.html">Estoque</a>
       <a href="vendas.html">Vendas</a>
+      <a href="relatorios.html">Relatórios</a>
       <a href="exportar.html">Exportar</a>
       <a href="validador.html">Validador MGV</a>
       <a href="#" onclick="fazerLogout()">Sair</a>
@@ -103,7 +104,21 @@
         <tbody id="tabelaEquipamentos"></tbody>
       </table>
     </div>
+
+    <div class="card" id="cardTimeline" style="display:none;">
+      <h2>Timeline de <span id="nomeClienteTimeline"></span></h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;">Histórico completo de OS e vendas desse cliente, mais recente primeiro.</p>
+      <div id="listaTimeline"></div>
+    </div>
   </div>
+
+<div id="modalHistoricoEquipamento" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:100;">
+  <div style="background:white;max-width:600px;margin:60px auto;padding:20px;border-radius:8px;max-height:70vh;overflow-y:auto;">
+    <h2 id="tituloHistoricoEquipamento">Histórico do Equipamento</h2>
+    <div id="listaHistoricoEquipamento"></div>
+    <button class="secundario" onclick="document.getElementById('modalHistoricoEquipamento').style.display='none'" style="margin-top:14px;">Fechar</button>
+  </div>
+</div>
 
 <script src="js/config.js"></script>
 <script>
@@ -318,7 +333,46 @@ function abrirCliente(c) {
   document.getElementById('cardEquipamentos').style.display = 'block';
   document.getElementById('nomeClienteSelecionado').textContent = c.nome;
   carregarEquipamentos(c.id);
+  carregarTimelineCliente(c.id, c.nome);
   window.scrollTo(0,0);
+}
+
+async function carregarTimelineCliente(clienteId, nomeCliente) {
+  document.getElementById('cardTimeline').style.display = 'block';
+  document.getElementById('nomeClienteTimeline').textContent = nomeCliente;
+  const container = document.getElementById('listaTimeline');
+  container.innerHTML = '<p style="color:#9ca3af;">Carregando...</p>';
+
+  const { data: osCliente } = await supabaseClient
+    .from('ordens_servico').select('numero_os, status, valor, data_abertura, descricao_defeito')
+    .eq('cliente_id', clienteId);
+  const { data: vendasCliente } = await supabaseClient
+    .from('vendas').select('numero_venda, valor_total, data_venda, numero_nf')
+    .eq('cliente_id', clienteId);
+
+  const eventos = [
+    ...(osCliente || []).map(os => ({
+      tipo: 'OS', numero: os.numero_os, data: os.data_abertura, valor: os.valor,
+      detalhe: os.descricao_defeito || os.status
+    })),
+    ...(vendasCliente || []).map(v => ({
+      tipo: 'Venda', numero: v.numero_venda, data: v.data_venda, valor: v.valor_total,
+      detalhe: v.numero_nf ? `NF ${v.numero_nf}` : 'sem NF ainda'
+    })),
+  ].filter(e => e.data).sort((a, b) => b.data.localeCompare(a.data));
+
+  container.innerHTML = '';
+  if (eventos.length === 0) {
+    container.innerHTML = '<p class="vazio">Nenhuma OS ou venda registrada pra esse cliente ainda.</p>';
+    return;
+  }
+  eventos.forEach(ev => {
+    const div = document.createElement('div');
+    div.style.cssText = 'border-left:3px solid #2563eb;padding:8px 12px;margin-bottom:8px;background:#f9fafb;border-radius:4px;';
+    div.innerHTML = `<b>${ev.tipo} ${ev.numero}</b> — ${formatarData(ev.data)} — R$ ${Number(ev.valor || 0).toFixed(2)}<br>
+      <span style="font-size:12px;color:#6b7280;">${ev.detalhe}</span>`;
+    container.appendChild(div);
+  });
 }
 
 async function salvarCliente() {
@@ -357,8 +411,37 @@ async function carregarEquipamentos(clienteId) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${e.tipo || '-'}</td><td>${e.marca || ''} ${e.modelo || ''}</td><td>${e.numero_serie || '-'}</td>
       <td>${e.proxima_calibracao ? formatarData(e.proxima_calibracao) : '-'}${vencida ? ' ⚠️' : ''}</td>
-      <td><button class="perigo" onclick="excluirEquipamento('${e.id}')">Excluir</button></td>`;
+      <td>
+        <button class="secundario" onclick="verHistoricoEquipamento('${e.id}', '${(e.tipo || 'Equipamento').replace(/'/g,"")} ${(e.modelo||'').replace(/'/g,"")}')">Histórico</button>
+        <button class="perigo" onclick="excluirEquipamento('${e.id}')">Excluir</button>
+      </td>`;
     tbody.appendChild(tr);
+  });
+}
+
+async function verHistoricoEquipamento(equipamentoId, nomeEquipamento) {
+  document.getElementById('tituloHistoricoEquipamento').textContent = `Histórico — ${nomeEquipamento}`;
+  const container = document.getElementById('listaHistoricoEquipamento');
+  container.innerHTML = '<p style="color:#9ca3af;">Carregando...</p>';
+  document.getElementById('modalHistoricoEquipamento').style.display = 'block';
+
+  const { data } = await supabaseClient
+    .from('ordens_servico')
+    .select('numero_os, status, valor, data_abertura, descricao_defeito, causa')
+    .eq('equipamento_id', equipamentoId)
+    .order('data_abertura', { ascending: false });
+
+  container.innerHTML = '';
+  if (!data || data.length === 0) {
+    container.innerHTML = '<p class="vazio">Nenhuma OS registrada pra esse equipamento ainda.</p>';
+    return;
+  }
+  data.forEach(os => {
+    const div = document.createElement('div');
+    div.style.cssText = 'border-left:3px solid #2563eb;padding:8px 12px;margin-bottom:8px;background:#f9fafb;border-radius:4px;';
+    div.innerHTML = `<b>OS ${os.numero_os}</b> — ${formatarData(os.data_abertura)} — <span class="badge ${os.status}">${os.status.replace('_',' ')}</span><br>
+      <span style="font-size:12px;color:#6b7280;">${os.descricao_defeito || 'sem descrição'} ${os.causa ? '— Causa: ' + os.causa : ''}</span>`;
+    container.appendChild(div);
   });
 }
 
