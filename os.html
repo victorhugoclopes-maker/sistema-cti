@@ -298,6 +298,34 @@ function converterDataPlanilha(valor) {
   return null;
 }
 
+// Encontra a linha de cabeçalho de verdade, mesmo que a planilha tenha uma linha de título antes
+// (compara cada uma das primeiras linhas com os nomes de coluna conhecidos e usa a que mais bater)
+function localizarCabecalhoEDados(workbook, sinonimosConhecidos) {
+  const aba = workbook.Sheets[workbook.SheetNames[0]];
+  const todasLinhas = XLSX.utils.sheet_to_json(aba, { header: 1, defval: '' });
+
+  let melhorLinha = 0, melhorPontuacao = -1;
+  for (let i = 0; i < Math.min(10, todasLinhas.length); i++) {
+    let pontuacao = 0;
+    (todasLinhas[i] || []).forEach(cel => {
+      const c = (cel || '').toString().trim().toLowerCase();
+      if (sinonimosConhecidos.has(c)) pontuacao++;
+    });
+    if (pontuacao > melhorPontuacao) { melhorPontuacao = pontuacao; melhorLinha = i; }
+  }
+
+  const cabecalhos = (todasLinhas[melhorLinha] || []).map(c => (c || '').toString().trim());
+  const linhas = todasLinhas.slice(melhorLinha + 1)
+    .map(linhaArr => {
+      const obj = {};
+      cabecalhos.forEach((cab, idx) => { if (cab) obj[cab] = linhaArr[idx] !== undefined ? linhaArr[idx] : ''; });
+      return obj;
+    })
+    .filter(obj => Object.values(obj).some(v => v !== ''));
+
+  return { cabecalhos, linhas };
+}
+
 async function processarPlanilhaOS() {
   const input = document.getElementById('planilhaOSInput');
   if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
@@ -316,9 +344,9 @@ async function processarPlanilhaOS() {
   reader.onload = (e) => {
     try {
       const workbook = XLSX.read(e.target.result, { type: 'array' });
-      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
-      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
-      if (linhas.length === 0) throw new Error('Planilha vazia');
+      const sinonimosOS = new Set(Object.values(MAPA_COLUNAS_OS).flat());
+      const { linhas } = localizarCabecalhoEDados(workbook, sinonimosOS);
+      if (linhas.length === 0) throw new Error('Planilha vazia ou não consegui encontrar a linha de cabeçalho.');
 
       const cabecalhos = Object.keys(linhas[0]);
       const mapa = {};
@@ -537,9 +565,9 @@ async function processarPlanilhaOrcamento() {
   reader.onload = (e) => {
     try {
       const workbook = XLSX.read(e.target.result, { type: 'array' });
-      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
-      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
-      if (linhas.length === 0) throw new Error('Planilha vazia');
+      const sinonimosOrcamento = new Set(Object.values(MAPA_COLUNAS_ORCAMENTO).flat());
+      const { linhas } = localizarCabecalhoEDados(workbook, sinonimosOrcamento);
+      if (linhas.length === 0) throw new Error('Planilha vazia ou não consegui encontrar a linha de cabeçalho.');
 
       const cabecalhos = Object.keys(linhas[0]);
       const mapa = {};
