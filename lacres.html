@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Lacres</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="lacres.html" class="ativo">Lacres</a>
+      <a href="relatorios.html">Relatórios</a>
+      <a href="exportar.html">Exportar</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Buscar um Número</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">Digite o número de um lacre ou selo pra descobrir com qual técnico ele está.</p>
+      <div class="form-grid">
+        <div><label>Tipo</label>
+          <select id="buscaLacreTipo">
+            <option value="Lacre">Lacre</option>
+            <option value="Selo IPEM">Selo IPEM</option>
+          </select>
+        </div>
+        <div><label>Número</label><input type="text" id="buscaLacreNumero" placeholder="Ex: 4855 ou 31.523.978"></div>
+      </div>
+      <button onclick="buscarLacre()">Buscar</button>
+      <p id="resultadoBuscaLacre" style="margin-top:10px;font-weight:bold;"></p>
+    </div>
+
+    <div class="card">
+      <h2>Registrar Uso (debitar um número)</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">Quando o técnico usar um lacre/selo numa OS, registra aqui — ele passa a aparecer como "usado" e some da lista de disponíveis.</p>
+      <div class="form-grid">
+        <div><label>Tipo</label>
+          <select id="usoTipo">
+            <option value="Lacre">Lacre</option>
+            <option value="Selo IPEM">Selo IPEM</option>
+          </select>
+        </div>
+        <div><label>Número usado</label><input type="text" id="usoNumero" placeholder="Ex: 4855 ou 31.523.978"></div>
+        <div><label>Nº da OS</label><input id="usoNumeroOS" placeholder="Ex: 5389"></div>
+        <div><label>Data</label><input type="date" id="usoData"></div>
+      </div>
+      <div class="acoes">
+        <button onclick="registrarUso()">✔️ Marcar como Usado</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Novo Pacote</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">O tamanho do pacote pode variar (5, 10, 100... o que fizer sentido pra você).</p>
+      <div class="form-grid">
+        <div><label>Tipo</label>
+          <select id="lacreTipo">
+            <option value="Lacre">Lacre</option>
+            <option value="Selo IPEM">Selo IPEM</option>
+          </select>
+        </div>
+        <div><label>Quantidade no pacote</label><input type="number" id="lacreQuantidade" value="10" oninput="calcularFinal()"></div>
+        <div><label>Número inicial</label><input type="text" id="lacreInicial" oninput="calcularFinal()" placeholder="Ex: 4801 ou 31.523.971"></div>
+        <div><label>Número final (calculado)</label><input type="text" id="lacreFinal" readonly style="background:#f3f4f6;"></div>
+        <div><label>Técnico</label><input id="lacreTecnico" list="listaTecnicos" placeholder="Nome do técnico"></div>
+        <datalist id="listaTecnicos"></datalist>
+        <div><label>Data de atribuição</label><input type="date" id="lacreData"></div>
+      </div>
+      <label>Observações</label>
+      <textarea id="lacreObservacoes" placeholder="Opcional"></textarea>
+      <div class="acoes">
+        <button onclick="salvarPacote()">Salvar Pacote</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pacotes Atribuídos</h2>
+      <input type="text" id="buscaPacote" placeholder="🔍 Buscar por técnico ou número..." oninput="filtrarPacotes()" style="margin-bottom:14px;">
+      <table>
+        <thead><tr><th>Tipo</th><th>Faixa</th><th>Técnico</th><th>Data</th><th>Qtd</th><th>Restantes</th><th></th></tr></thead>
+        <tbody id="tabelaPacotes"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script src="js/config.js"></script>
+<script>
+let todosPacotesCache = [];
+let todosUsadosCache = [];
+
+// Aceita tanto "4855" quanto "31.523.978" — remove pontos e converte pra número
+function parseNumeroLacre(texto) {
+  if (!texto) return NaN;
+  const limpo = texto.toString().replace(/\./g, '').replace(/\s/g, '');
+  return parseInt(limpo, 10);
+}
+
+// Formata de volta com pontos de milhar, só pra facilitar a leitura de números grandes (tipo Selo IPEM)
+function formatarNumeroLacre(numero) {
+  if (numero >= 100000) return numero.toLocaleString('pt-BR').replace(/,/g, '.');
+  return String(numero);
+}
+
+function contarUsadosNoPacote(pacote) {
+  return todosUsadosCache.filter(u =>
+    u.tipo === pacote.tipo && u.numero >= pacote.numero_inicial && u.numero <= pacote.numero_final
+  ).length;
+}
+
+async function registrarUso() {
+  const tipo = document.getElementById('usoTipo').value;
+  const numero = parseNumeroLacre(document.getElementById('usoNumero').value);
+  const numeroOS = document.getElementById('usoNumeroOS').value.trim();
+
+  if (isNaN(numero)) { alert('Digite um número válido.'); return; }
+
+  // já foi usado antes?
+  const jaUsado = todosUsadosCache.find(u => u.tipo === tipo && u.numero === numero);
+  if (jaUsado) {
+    alert(`Esse ${tipo} (${formatarNumeroLacre(numero)}) já foi marcado como usado antes, na OS ${jaUsado.numero_os || '(sem número)'}, em ${formatarData(jaUsado.data_uso)}.`);
+    return;
+  }
+
+  const pacote = todosPacotesCache.find(p => p.tipo === tipo && numero >= p.numero_inicial && numero <= p.numero_final);
+
+  const { error } = await supabaseClient.from('lacres_usados').insert({
+    tipo, numero,
+    numero_os: numeroOS || null,
+    tecnico: pacote?.tecnico || null,
+    data_uso: document.getElementById('usoData').value || new Date().toISOString().split('T')[0],
+  });
+
+  if (error) { alert('Erro ao registrar: ' + error.message); return; }
+
+  document.getElementById('usoNumero').value = '';
+  document.getElementById('usoNumeroOS').value = '';
+  alert(`${tipo} ${formatarNumeroLacre(numero)} marcado como usado!`);
+  await carregarUsados();
+  renderizarTabelaPacotes(todosPacotesCache);
+}
+
+async function carregarUsados() {
+  const { data } = await supabaseClient.from('lacres_usados').select('*').order('data_uso', { ascending: false });
+  todosUsadosCache = data || [];
+}
+
+function calcularFinal() {
+  const inicial = parseNumeroLacre(document.getElementById('lacreInicial').value);
+  const quantidade = parseInt(document.getElementById('lacreQuantidade').value) || 0;
+  if (!isNaN(inicial) && quantidade > 0) {
+    document.getElementById('lacreFinal').value = formatarNumeroLacre(inicial + quantidade - 1);
+  } else {
+    document.getElementById('lacreFinal').value = '';
+  }
+}
+
+async function salvarPacote() {
+  const tipo = document.getElementById('lacreTipo').value;
+  const inicial = parseNumeroLacre(document.getElementById('lacreInicial').value);
+  const final = parseNumeroLacre(document.getElementById('lacreFinal').value);
+  const tecnico = document.getElementById('lacreTecnico').value.trim();
+
+  if (isNaN(inicial) || isNaN(final)) { alert('Preencha o número inicial e a quantidade do pacote.'); return; }
+  if (!tecnico) { alert('Preencha o nome do técnico.'); return; }
+
+  const conflito = todosPacotesCache.find(p =>
+    p.tipo === tipo && (inicial <= p.numero_final && final >= p.numero_inicial)
+  );
+  if (conflito) {
+    const confirmar = confirm(`Atenção: essa faixa já se sobrepõe com um pacote existente (${formatarNumeroLacre(conflito.numero_inicial)}-${formatarNumeroLacre(conflito.numero_final)}, técnico ${conflito.tecnico}). Quer salvar mesmo assim?`);
+    if (!confirmar) return;
+  }
+
+  const registro = {
+    tipo,
+    numero_inicial: inicial,
+    numero_final: final,
+    tecnico,
+    data_atribuicao: document.getElementById('lacreData').value || new Date().toISOString().split('T')[0],
+    observacoes: document.getElementById('lacreObservacoes').value,
+  };
+
+  await supabaseClient.from('lacres_pacotes').insert(registro);
+
+  document.getElementById('lacreInicial').value = '';
+  document.getElementById('lacreFinal').value = '';
+  document.getElementById('lacreTecnico').value = '';
+  document.getElementById('lacreObservacoes').value = '';
+
+  carregarPacotes();
+}
+
+async function carregarPacotes() {
+  const { data } = await supabaseClient.from('lacres_pacotes').select('*').order('tipo').order('numero_inicial');
+  todosPacotesCache = data || [];
+  renderizarTabelaPacotes(todosPacotesCache);
+  atualizarListaTecnicos();
+}
+
+function atualizarListaTecnicos() {
+  const nomes = [...new Set(todosPacotesCache.map(p => p.tecnico).filter(Boolean))].sort();
+  document.getElementById('listaTecnicos').innerHTML = nomes.map(n => `<option value="${n}">`).join('');
+}
+
+function renderizarTabelaPacotes(lista) {
+  const tbody = document.getElementById('tabelaPacotes');
+  tbody.innerHTML = '';
+  lista.forEach(p => {
+    const usados = contarUsadosNoPacote(p);
+    const total = p.numero_final - p.numero_inicial + 1;
+    const restantes = total - usados;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.tipo || 'Lacre'}</td><td>${formatarNumeroLacre(p.numero_inicial)} – ${formatarNumeroLacre(p.numero_final)}</td><td>${p.tecnico || '-'}</td>
+      <td>${formatarData(p.data_atribuicao)}</td><td>${total}</td>
+      <td>${restantes}${restantes === 0 ? ' ✅ esgotado' : (restantes < total ? ` (${usados} usado${usados>1?'s':''})` : '')}</td>
+      <td><button class="secundario" onclick="verUsadosDoPacote('${p.id}')">Ver usados</button> <button class="perigo" onclick="excluirPacote('${p.id}')">Excluir</button></td>`;
+    tbody.appendChild(tr);
+  });
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="vazio">Nenhum pacote cadastrado ainda</td></tr>';
+  }
+}
+
+function verUsadosDoPacote(pacoteId) {
+  const pacote = todosPacotesCache.find(p => p.id === pacoteId);
+  if (!pacote) return;
+  const usados = todosUsadosCache.filter(u =>
+    u.tipo === pacote.tipo && u.numero >= pacote.numero_inicial && u.numero <= pacote.numero_final
+  ).sort((a, b) => a.numero - b.numero);
+
+  if (usados.length === 0) {
+    alert('Nenhum número desse pacote foi usado ainda.');
+    return;
+  }
+  const lista = usados.map(u => `${formatarNumeroLacre(u.numero)} — OS ${u.numero_os || '(sem número)'} — ${formatarData(u.data_uso)}`).join('\n');
+  alert(`Usados no pacote ${formatarNumeroLacre(pacote.numero_inicial)}-${formatarNumeroLacre(pacote.numero_final)}:\n\n${lista}`);
+}
+
+function filtrarPacotes() {
+  const termo = document.getElementById('buscaPacote').value.trim().toLowerCase();
+  if (!termo) { renderizarTabelaPacotes(todosPacotesCache); return; }
+  const filtrados = todosPacotesCache.filter(p =>
+    (p.tecnico || '').toLowerCase().includes(termo) ||
+    (p.tipo || '').toLowerCase().includes(termo) ||
+    String(p.numero_inicial).includes(termo) ||
+    String(p.numero_final).includes(termo)
+  );
+  renderizarTabelaPacotes(filtrados);
+}
+
+async function excluirPacote(id) {
+  if (!confirm('Excluir esse pacote?')) return;
+  await supabaseClient.from('lacres_pacotes').delete().eq('id', id);
+  carregarPacotes();
+}
+
+function buscarLacre() {
+  const tipo = document.getElementById('buscaLacreTipo').value;
+  const numero = parseNumeroLacre(document.getElementById('buscaLacreNumero').value);
+  const resultado = document.getElementById('resultadoBuscaLacre');
+  if (isNaN(numero)) { resultado.textContent = 'Digite um número válido.'; resultado.style.color = '#dc2626'; return; }
+
+  const usado = todosUsadosCache.find(u => u.tipo === tipo && u.numero === numero);
+  if (usado) {
+    resultado.textContent = `❌ ${tipo} ${formatarNumeroLacre(numero)} JÁ FOI USADO — na OS ${usado.numero_os || '(sem número)'}, em ${formatarData(usado.data_uso)}${usado.tecnico ? ' pelo técnico ' + usado.tecnico : ''}.`;
+    resultado.style.color = '#dc2626';
+    return;
+  }
+
+  const pacote = todosPacotesCache.find(p => p.tipo === tipo && numero >= p.numero_inicial && numero <= p.numero_final);
+  if (pacote) {
+    resultado.textContent = `✅ Disponível. ${tipo} ${formatarNumeroLacre(numero)} pertence ao pacote ${formatarNumeroLacre(pacote.numero_inicial)}-${formatarNumeroLacre(pacote.numero_final)}, atribuído a ${pacote.tecnico} em ${formatarData(pacote.data_atribuicao)}.`;
+    resultado.style.color = '#065f46';
+  } else {
+    resultado.textContent = `Nenhum pacote de ${tipo} encontrado contendo o número ${formatarNumeroLacre(numero)}.`;
+    resultado.style.color = '#dc2626';
+  }
+}
+
+(async () => {
+  await protegerPagina();
+  await carregarUsados();
+  await carregarPacotes();
+})();
+</script>
+</body>
+</html>

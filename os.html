@@ -17,6 +17,7 @@
       <a href="os.html" class="ativo">Ordens de Serviço</a>
       <a href="estoque.html">Estoque</a>
       <a href="vendas.html">Vendas</a>
+      <a href="lacres.html">Lacres</a>
       <a href="relatorios.html">Relatórios</a>
       <a href="exportar.html">Exportar</a>
       <a href="validador.html">Validador MGV</a>
@@ -28,8 +29,8 @@
     <div class="card">
       <h2>Importar Ordens de Serviço de Planilha</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
-        Aceita .xlsx ou .csv. Reconhece colunas como <b>Nº OS</b>, <b>Cliente</b>, <b>Orçamento</b>, <b>Valor</b>, <b>Status</b>, <b>Data</b>, <b>Descrição do Defeito</b>, <b>Causa</b>, <b>Serviço Realizado</b>.
-        O cliente é vinculado automaticamente se o nome bater com um cliente já cadastrado.
+        Aceita .xlsx ou .csv. Reconhece colunas como <b>Nº OS</b>, <b>Cliente</b>, <b>Orçamento</b>, <b>Valor</b>, <b>Status</b>, <b>Data Entrada/Saída</b>, <b>Defeito</b>, <b>Causa</b>, <b>Peças/Serviço</b>, <b>Técnico</b>, <b>Produto/Marca/Nº Série</b>.
+        O cliente é vinculado automaticamente se o nome bater com um cliente já cadastrado, e os equipamentos (pelo Nº de Série) são criados automaticamente se ainda não existirem.
       </p>
       <input type="file" id="planilhaOSInput" accept=".xlsx,.xls,.csv">
       <div class="acoes">
@@ -45,8 +46,33 @@
         <tbody id="tabelaPreviewImportOS"></tbody>
       </table>
       <div class="acoes">
-        <button onclick="confirmarImportOS()">Importar todas</button>
+        <button onclick="confirmarImportOS(event)">Importar todas</button>
         <button class="secundario" onclick="document.getElementById('previewImportOSCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Importar Orçamentos de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita .xlsx ou .csv com colunas de itens (Item 1 Descrição/Valor, Item 2..., até Item 8), além de Nº Orç, Cliente, CNPJ, Produto/Marca/Série, Defeito, Técnico, TOTAL e <b>Nº OS Ref.</b>
+        Quando o "Nº OS Ref." bater com uma OS já existente, os itens são adicionados nela. Quando não bater, uma nova OS é criada.
+      </p>
+      <input type="file" id="planilhaOrcamentoInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilhaOrcamento()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportOrcamentoCard" style="display:none;">
+      <h2>Confirme os orçamentos encontrados</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImportOrcamento"></p>
+      <table>
+        <thead><tr><th>Nº Orç</th><th>Vínculo com OS</th><th>Cliente</th><th>Total</th></tr></thead>
+        <tbody id="tabelaPreviewImportOrcamento"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportOrcamento(event)">Importar todos</button>
+        <button class="secundario" onclick="document.getElementById('previewImportOrcamentoCard').style.display='none'">Cancelar</button>
       </div>
     </div>
 
@@ -213,18 +239,28 @@ function preencherRapido(tipo) {
 
 let osParaImportar = [];
 let clientesMapaNomes = {}; // nome em minúsculo -> id
+let equipamentosMapaSerie = {}; // "clienteId|numeroSerie" -> id
 
 const MAPA_COLUNAS_OS = {
   numeroOS: ['nº os', 'no os', 'numero os', 'número os', 'os', 'ordem de serviço'],
-  cliente: ['cliente', 'nome do cliente', 'empresa'],
-  orcamento: ['orçamento', 'orcamento'],
-  valor: ['valor', 'valor total', 'total'],
+  cliente: ['cliente', 'nome do cliente', 'empresa', 'cliente / empresa', 'cliente/empresa'],
+  cnpjCliente: ['cnpj cliente', 'cnpj'],
+  contato: ['contato', 'contato / dono', 'dono'],
+  celular: ['celular', 'telefone'],
+  email: ['email', 'e-mail'],
+  orcamento: ['orçamento', 'orcamento', 'nº orçamento', 'no orçamento', 'numero orçamento'],
+  valor: ['valor', 'valor total', 'total', 'valor (r$)'],
   status: ['status', 'situação', 'situacao'],
-  dataAbertura: ['data abertura', 'data de entrada', 'data'],
-  dataConclusao: ['data conclusão', 'data conclusao', 'data de saída', 'data de saida'],
+  dataAbertura: ['data abertura', 'data de entrada', 'data entrada', 'data'],
+  dataConclusao: ['data conclusão', 'data conclusao', 'data de saída', 'data de saida', 'data saída', 'data saida'],
   defeito: ['descrição defeito', 'descrição do defeito', 'defeito'],
   causa: ['causa'],
-  servico: ['serviço realizado', 'servico realizado'],
+  servico: ['serviço realizado', 'servico realizado', 'peças / serviço', 'peças/serviço', 'pecas/servico'],
+  tecnico: ['técnico', 'tecnico', 'técnico cti', 'tecnico cti'],
+  produto: ['produto'],
+  marca: ['marca'],
+  capacidade: ['capacidade'],
+  numeroSerie: ['nº série', 'no série', 'numero série', 'número série', 'nº serie', 'numero serie'],
 };
 
 function identificarColunaOS(cabecalho) {
@@ -244,12 +280,17 @@ function normalizarStatus(valor) {
 
 function converterDataPlanilha(valor) {
   if (!valor) return null;
-  // já vem como texto tipo dd/mm/aaaa
-  if (typeof valor === 'string' && valor.includes('/')) {
-    const [dia, mes, ano] = valor.split('/');
-    if (dia && mes && ano) return `${ano.length === 2 ? '20' + ano : ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
+  if (typeof valor === 'string' && (valor.includes('/') || valor.includes('.'))) {
+    const separador = valor.includes('/') ? '/' : '.';
+    const partes = valor.split(separador);
+    if (partes.length === 3) {
+      let [dia, mes, ano] = partes;
+      if (ano.length === 2) ano = '20' + ano;
+      if (dia.length <= 2 && mes.length <= 2 && ano.length === 4) {
+        return `${ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
+      }
+    }
   }
-  // número serial do Excel
   if (typeof valor === 'number') {
     const data = XLSX.SSF.parse_date_code(valor);
     if (data) return `${data.y}-${String(data.m).padStart(2,'0')}-${String(data.d).padStart(2,'0')}`;
@@ -261,10 +302,15 @@ async function processarPlanilhaOS() {
   const input = document.getElementById('planilhaOSInput');
   if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
 
-  // carrega mapa de clientes existentes pra vincular pelo nome
   const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome');
   clientesMapaNomes = {};
   (todosClientes || []).forEach(c => { clientesMapaNomes[c.nome.trim().toLowerCase()] = c.id; });
+
+  const { data: todosEquipamentos } = await supabaseClient.from('equipamentos').select('id, cliente_id, numero_serie');
+  equipamentosMapaSerie = {};
+  (todosEquipamentos || []).forEach(e => {
+    if (e.numero_serie) equipamentosMapaSerie[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
+  });
 
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -284,18 +330,42 @@ async function processarPlanilhaOS() {
       if (!mapa.numeroOS) throw new Error('Não encontrei uma coluna de "Nº OS". Verifique o título das colunas.');
 
       let semClienteVinculado = 0;
+      let equipamentosNovos = 0;
       osParaImportar = linhas.map(linha => {
         const numeroOS = (linha[mapa.numeroOS] || '').toString().trim();
         const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
         const clienteId = clientesMapaNomes[nomeCliente.trim().toLowerCase()] || null;
         if (nomeCliente && !clienteId) semClienteVinculado++;
 
+        const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
+        let equipamentoId = null;
+        let equipamentoNovo = null;
+        if (clienteId && numeroSerie) {
+          const chave = `${clienteId}|${numeroSerie.toLowerCase()}`;
+          if (equipamentosMapaSerie[chave]) {
+            equipamentoId = equipamentosMapaSerie[chave];
+          } else {
+            equipamentoNovo = {
+              cliente_id: clienteId,
+              tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
+              marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
+              capacidade: mapa.capacidade ? (linha[mapa.capacidade] || '').toString().trim() : '',
+              numero_serie: numeroSerie,
+            };
+            equipamentosMapaSerie[chave] = 'PENDENTE'; // marca como já vai ser criado, evita duplicar na mesma importação
+            equipamentosNovos++;
+          }
+        }
+
         return {
           numero_os: numeroOS,
           orcamento: mapa.orcamento ? (linha[mapa.orcamento] || '').toString().trim() : numeroOS,
           cliente_id: clienteId,
-          cliente_nome_texto: clienteId ? null : nomeCliente, // guarda o nome se não achou vínculo, pra não perder a informação
+          cliente_nome_texto: clienteId ? null : nomeCliente,
           cliente_nome_planilha: nomeCliente,
+          equipamento_id: equipamentoId,
+          equipamento_novo: equipamentoNovo,
+          equipamento_chave: (clienteId && numeroSerie) ? `${clienteId}|${numeroSerie.toLowerCase()}` : null,
           status: mapa.status ? normalizarStatus(linha[mapa.status]) : 'concluida',
           valor: mapa.valor ? parseFloat(linha[mapa.valor]) || 0 : 0,
           data_abertura: mapa.dataAbertura ? converterDataPlanilha(linha[mapa.dataAbertura]) : null,
@@ -303,10 +373,11 @@ async function processarPlanilhaOS() {
           descricao_defeito: mapa.defeito ? (linha[mapa.defeito] || '').toString().trim() : '',
           causa: mapa.causa ? (linha[mapa.causa] || '').toString().trim() : '',
           servico_realizado: mapa.servico ? (linha[mapa.servico] || '').toString().trim() : '',
+          tecnico: mapa.tecnico ? (linha[mapa.tecnico] || '').toString().trim() : '',
         };
       }).filter(os => os.numero_os);
 
-      exibirPreviewImportOS(semClienteVinculado);
+      exibirPreviewImportOS(semClienteVinculado, equipamentosNovos);
     } catch (err) {
       alert('Erro ao ler a planilha: ' + err.message);
     }
@@ -314,9 +385,10 @@ async function processarPlanilhaOS() {
   reader.readAsArrayBuffer(input.files[0]);
 }
 
-function exibirPreviewImportOS(semClienteVinculado) {
+function exibirPreviewImportOS(semClienteVinculado, equipamentosNovos) {
   document.getElementById('previewImportOSCard').style.display = 'block';
   let resumo = `${osParaImportar.length} OS encontrada(s).`;
+  if (equipamentosNovos > 0) resumo += ` 🆕 ${equipamentosNovos} equipamento(s) novo(s) serão criados automaticamente.`;
   if (semClienteVinculado > 0) {
     resumo += ` ⚠️ ${semClienteVinculado} não têm cliente correspondente cadastrado (serão importadas sem cliente vinculado — você pode ajustar manualmente depois).`;
   }
@@ -324,28 +396,339 @@ function exibirPreviewImportOS(semClienteVinculado) {
 
   const tbody = document.getElementById('tabelaPreviewImportOS');
   tbody.innerHTML = '';
-  osParaImportar.forEach(os => {
+  osParaImportar.slice(0, 500).forEach(os => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${os.numero_os}</td><td>${os.cliente_nome_planilha || '-'}${!os.cliente_id && os.cliente_nome_planilha ? ' ⚠️' : ''}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
     tbody.appendChild(tr);
   });
+  if (osParaImportar.length > 500) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="4" class="vazio">... e mais ${osParaImportar.length - 500} OS (prévia limitada a 500 linhas, mas todas serão importadas)</td>`;
+    tbody.appendChild(tr);
+  }
 }
 
-async function confirmarImportOS() {
-  const registros = osParaImportar.map(os => {
-    const { cliente_nome_planilha, ...resto } = os;
-    return resto;
-  });
-  const { error } = await supabaseClient.from('ordens_servico').insert(registros);
-  if (error) {
-    alert('Erro ao importar: ' + error.message);
-    return;
+async function confirmarImportOS(event) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  try {
+    // 1. Cria os equipamentos novos primeiro (deduplicados pela chave cliente+série)
+    const equipamentosParaCriar = [];
+    const chavesJaAdicionadas = new Set();
+    osParaImportar.forEach(os => {
+      if (os.equipamento_novo && os.equipamento_chave && !chavesJaAdicionadas.has(os.equipamento_chave)) {
+        equipamentosParaCriar.push({ chave: os.equipamento_chave, dados: os.equipamento_novo });
+        chavesJaAdicionadas.add(os.equipamento_chave);
+      }
+    });
+
+    const mapaChaveParaId = {};
+    if (equipamentosParaCriar.length > 0) {
+      const { data: criados, error: erroEquip } = await supabaseClient
+        .from('equipamentos')
+        .insert(equipamentosParaCriar.map(e => e.dados))
+        .select('id, cliente_id, numero_serie');
+      if (erroEquip) throw erroEquip;
+      criados.forEach(e => {
+        mapaChaveParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
+      });
+    }
+
+    // 2. Monta os registros finais de OS, já com equipamento_id resolvido
+    const registros = osParaImportar.map(os => {
+      const { cliente_nome_planilha, equipamento_novo, equipamento_chave, ...resto } = os;
+      if (!resto.equipamento_id && equipamento_chave && mapaChaveParaId[equipamento_chave]) {
+        resto.equipamento_id = mapaChaveParaId[equipamento_chave];
+      }
+      return resto;
+    });
+
+    // 3. Insere em lotes de 500 (evita payload gigante numa importação de milhares de linhas)
+    const TAMANHO_LOTE = 500;
+    for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
+      const lote = registros.slice(i, i + TAMANHO_LOTE);
+      const { error } = await supabaseClient.from('ordens_servico').insert(lote);
+      if (error) throw error;
+    }
+
+    alert(`${registros.length} OS importada(s) com sucesso! ${equipamentosParaCriar.length} equipamento(s) novo(s) criado(s).`);
+    document.getElementById('previewImportOSCard').style.display = 'none';
+    document.getElementById('planilhaOSInput').value = '';
+    osParaImportar = [];
+    carregarOS();
+  } catch (err) {
+    alert('Erro ao importar: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar todas';
   }
-  alert(`${registros.length} OS importada(s) com sucesso!`);
-  document.getElementById('previewImportOSCard').style.display = 'none';
-  document.getElementById('planilhaOSInput').value = '';
-  osParaImportar = [];
-  carregarOS();
+}
+
+// ============================================
+// IMPORTAÇÃO DE ORÇAMENTOS
+// ============================================
+let orcamentosParaImportar = [];
+let orcamentosItensParaImportar = [];
+
+const MAPA_COLUNAS_ORCAMENTO = {
+  numeroOrc: ['nº orç', 'no orç', 'numero orc', 'número orç', 'nº orc'],
+  data: ['data'],
+  cliente: ['cliente / empresa', 'cliente/empresa', 'cliente', 'empresa'],
+  cnpj: ['cnpj'],
+  contato: ['contato'],
+  celular: ['celular', 'telefone'],
+  email: ['email cliente', 'email', 'e-mail'],
+  produto: ['produto'],
+  marca: ['marca'],
+  capacidade: ['cap.', 'capacidade'],
+  numeroSerie: ['nº série', 'no série', 'numero série', 'número série', 'nº serie'],
+  defeito: ['descrição do defeito', 'defeito'],
+  desconto: ['desconto (r$)', 'desconto'],
+  total: ['total (r$)', 'total'],
+  tecnico: ['técnico cti', 'tecnico cti', 'técnico', 'tecnico'],
+  numeroOSRef: ['nº os ref.', 'no os ref.', 'nº os ref', 'numero os ref'],
+  formaPagamento: ['forma pagto', 'forma de pagamento'],
+};
+
+function identificarColunaOrcamento(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS_ORCAMENTO)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  // detecta colunas "Item N — Descrição" e "Item N — Valor" dinamicamente
+  const matchDesc = c.match(/^item\s*(\d+)\s*[-—]\s*descri/);
+  if (matchDesc) return `itemDesc${matchDesc[1]}`;
+  const matchValor = c.match(/^item\s*(\d+)\s*[-—]\s*valor/);
+  if (matchValor) return `itemValor${matchValor[1]}`;
+  return null;
+}
+
+async function processarPlanilhaOrcamento() {
+  const input = document.getElementById('planilhaOrcamentoInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome, empresa');
+  const mapaNomes = {};
+  const mapaCNPJ = {};
+  (todosClientes || []).forEach(c => {
+    mapaNomes[c.nome.trim().toLowerCase()] = c.id;
+    const digitos = (c.empresa || '').match(/\d[\d.\-\/]{12,}\d/g);
+    if (digitos) {
+      digitos.forEach(d => {
+        const limpo = d.replace(/\D/g, '');
+        if (limpo.length === 14) mapaCNPJ[limpo] = c.id;
+      });
+    }
+  });
+
+  const { data: todasOS } = await supabaseClient.from('ordens_servico').select('id, numero_os, cliente_id, equipamento_id');
+  const mapaOSPorNumero = {};
+  (todasOS || []).forEach(os => { mapaOSPorNumero[os.numero_os.trim()] = os; });
+
+  const { data: todosEquipamentos } = await supabaseClient.from('equipamentos').select('id, cliente_id, numero_serie');
+  const mapaEquipSerie = {};
+  (todosEquipamentos || []).forEach(e => {
+    if (e.numero_serie) mapaEquipSerie[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
+  });
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+      if (linhas.length === 0) throw new Error('Planilha vazia');
+
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapa = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColunaOrcamento(cab);
+        if (campo) mapa[campo] = cab;
+      });
+
+      if (!mapa.numeroOrc) throw new Error('Não encontrei uma coluna de "Nº Orç". Verifique o título das colunas.');
+
+      let vinculadas = 0, novas = 0, semCliente = 0;
+
+      orcamentosParaImportar = linhas.map(linha => {
+        const numeroOrc = (linha[mapa.numeroOrc] || '').toString().trim();
+        const numeroOSRef = mapa.numeroOSRef ? (linha[mapa.numeroOSRef] || '').toString().trim() : '';
+        const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
+        const cnpj = mapa.cnpj ? (linha[mapa.cnpj] || '').toString().replace(/\D/g, '') : '';
+
+        let clienteId = null;
+        if (nomeCliente) clienteId = mapaNomes[nomeCliente.toLowerCase()] || null;
+        if (!clienteId && cnpj.length === 14) clienteId = mapaCNPJ[cnpj] || null;
+
+        const osExistente = numeroOSRef ? mapaOSPorNumero[numeroOSRef] : null;
+        if (osExistente) vinculadas++; else novas++;
+        if (!clienteId && !osExistente) semCliente++;
+
+        // monta os itens (até 8), ignorando linhas fantasmas tipo "Total"
+        const itens = [];
+        for (let i = 1; i <= 8; i++) {
+          const desc = mapa[`itemDesc${i}`] ? (linha[mapa[`itemDesc${i}`]] || '').toString().trim() : '';
+          const valor = mapa[`itemValor${i}`] ? parseFloat(linha[mapa[`itemValor${i}`]]) || 0 : 0;
+          if (desc && desc.toLowerCase() !== 'total' && valor >= 0) {
+            itens.push({ nome_peca: desc, quantidade: 1, valor_unitario: valor });
+          }
+        }
+
+        const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
+        let equipamentoId = osExistente?.equipamento_id || null;
+        let equipamentoNovo = null;
+        let equipamentoChave = null;
+        if (!equipamentoId && clienteId && numeroSerie) {
+          equipamentoChave = `${clienteId}|${numeroSerie.toLowerCase()}`;
+          if (mapaEquipSerie[equipamentoChave]) {
+            equipamentoId = mapaEquipSerie[equipamentoChave];
+          } else {
+            equipamentoNovo = {
+              cliente_id: clienteId,
+              tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
+              marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
+              capacidade: mapa.capacidade ? (linha[mapa.capacidade] || '').toString().trim() : '',
+              numero_serie: numeroSerie,
+            };
+            mapaEquipSerie[equipamentoChave] = 'PENDENTE';
+          }
+        }
+
+        return {
+          numero_os: numeroOSRef || `ORC-${numeroOrc}`,
+          orcamento: numeroOrc,
+          cliente_id: osExistente?.cliente_id || clienteId,
+          cliente_nome_texto: (osExistente?.cliente_id || clienteId) ? null : nomeCliente,
+          equipamento_id: equipamentoId,
+          equipamento_novo: equipamentoNovo,
+          equipamento_chave: equipamentoChave,
+          ja_existe: !!osExistente,
+          os_id_existente: osExistente?.id || null,
+          status: 'concluida',
+          valor: mapa.total ? parseFloat(linha[mapa.total]) || 0 : 0,
+          data_abertura: mapa.data ? converterDataPlanilha(linha[mapa.data]) : null,
+          descricao_defeito: mapa.defeito ? (linha[mapa.defeito] || '').toString().trim() : '',
+          tecnico: mapa.tecnico ? (linha[mapa.tecnico] || '').toString().trim() : '',
+          itens,
+          cliente_nome_planilha: nomeCliente,
+        };
+      }).filter(o => o.orcamento);
+
+      exibirPreviewImportOrcamento(vinculadas, novas, semCliente);
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImportOrcamento(vinculadas, novas, semCliente) {
+  document.getElementById('previewImportOrcamentoCard').style.display = 'block';
+  document.getElementById('resumoImportOrcamento').textContent =
+    `${orcamentosParaImportar.length} orçamento(s) encontrado(s). ${vinculadas} serão adicionados a OS já existentes, ${novas} vão criar OS novas. ⚠️ ${semCliente} sem cliente identificado.`;
+
+  const tbody = document.getElementById('tabelaPreviewImportOrcamento');
+  tbody.innerHTML = '';
+  orcamentosParaImportar.slice(0, 500).forEach(o => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${o.orcamento}</td><td>${o.ja_existe ? '🔗 OS ' + o.numero_os : '🆕 nova'}</td>
+      <td>${o.cliente_nome_planilha || '-'}</td><td>R$ ${o.valor.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+  if (orcamentosParaImportar.length > 500) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="4" class="vazio">... e mais ${orcamentosParaImportar.length - 500} (prévia limitada, mas todos serão importados)</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function confirmarImportOrcamento(event) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  try {
+    // 1. Cria equipamentos novos (deduplicados)
+    const equipamentosParaCriar = [];
+    const chavesJaAdicionadas = new Set();
+    orcamentosParaImportar.forEach(o => {
+      if (o.equipamento_novo && o.equipamento_chave && !chavesJaAdicionadas.has(o.equipamento_chave)) {
+        equipamentosParaCriar.push(o.equipamento_novo);
+        chavesJaAdicionadas.add(o.equipamento_chave);
+      }
+    });
+    const mapaChaveParaId = {};
+    if (equipamentosParaCriar.length > 0) {
+      const { data: criados, error: erroEquip } = await supabaseClient
+        .from('equipamentos').insert(equipamentosParaCriar).select('id, cliente_id, numero_serie');
+      if (erroEquip) throw erroEquip;
+      criados.forEach(e => { mapaChaveParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id; });
+    }
+
+    // 2. Monta os registros de OS (upsert por numero_os — atualiza se já existe, cria se não existe)
+    // Pra cada numero_os, mantém o maior valor/dados mais completos entre múltiplos orçamentos do mesmo número
+    const osPorNumero = {};
+    orcamentosParaImportar.forEach(o => {
+      const equipId = o.equipamento_id || (o.equipamento_chave ? mapaChaveParaId[o.equipamento_chave] : null);
+      const existente = osPorNumero[o.numero_os];
+      const registro = {
+        numero_os: o.numero_os,
+        orcamento: o.orcamento,
+        cliente_id: o.cliente_id,
+        cliente_nome_texto: o.cliente_nome_texto,
+        equipamento_id: equipId,
+        status: o.status,
+        valor: o.valor || existente?.valor || 0,
+        data_abertura: o.data_abertura || existente?.data_abertura || null,
+        descricao_defeito: o.descricao_defeito || existente?.descricao_defeito || '',
+        tecnico: o.tecnico || existente?.tecnico || '',
+      };
+      osPorNumero[o.numero_os] = registro;
+    });
+
+    const registrosOS = Object.values(osPorNumero);
+    const TAMANHO_LOTE = 500;
+    const idsPorNumeroOS = {};
+
+    for (let i = 0; i < registrosOS.length; i += TAMANHO_LOTE) {
+      const lote = registrosOS.slice(i, i + TAMANHO_LOTE);
+      const { data: resultado, error } = await supabaseClient
+        .from('ordens_servico')
+        .upsert(lote, { onConflict: 'numero_os' })
+        .select('id, numero_os');
+      if (error) throw error;
+      resultado.forEach(r => { idsPorNumeroOS[r.numero_os] = r.id; });
+    }
+
+    // 3. Insere os itens (os_pecas) de cada orçamento, ligados ao os_id correto
+    const itensParaInserir = [];
+    orcamentosParaImportar.forEach(o => {
+      const osId = idsPorNumeroOS[o.numero_os];
+      if (!osId) return;
+      o.itens.forEach(item => {
+        itensParaInserir.push({ os_id: osId, nome_peca: item.nome_peca, quantidade: item.quantidade, valor_unitario: item.valor_unitario });
+      });
+    });
+
+    for (let i = 0; i < itensParaInserir.length; i += TAMANHO_LOTE) {
+      const lote = itensParaInserir.slice(i, i + TAMANHO_LOTE);
+      const { error } = await supabaseClient.from('os_pecas').insert(lote);
+      if (error) throw error;
+    }
+
+    alert(`${registrosOS.length} OS processada(s) (criadas ou atualizadas), ${itensParaInserir.length} item(ns) de orçamento importado(s), ${equipamentosParaCriar.length} equipamento(s) novo(s) criado(s).`);
+    document.getElementById('previewImportOrcamentoCard').style.display = 'none';
+    document.getElementById('planilhaOrcamentoInput').value = '';
+    orcamentosParaImportar = [];
+    carregarOS();
+  } catch (err) {
+    alert('Erro ao importar: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar todos';
+  }
 }
 
 let clientesCache = [];
