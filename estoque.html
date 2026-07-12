@@ -6,6 +6,7 @@
 <title>CTI Máquinas - Estoque</title>
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -25,6 +26,31 @@
   </div>
 
   <div class="container">
+    <div class="card">
+      <h2>Importar Peças de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita .xlsx ou .csv. Reconhece colunas como <b>Nome</b>, <b>Marca</b>, <b>Categoria</b>, <b>Quantidade Armazém</b>, <b>Quantidade Carro</b>, <b>Estoque Ideal Carro</b>, <b>Preço Custo/Venda</b>, <b>Unidade</b>.
+        Se uma peça com o mesmo nome já existir, a quantidade é <b>somada</b> à existente (não duplica).
+      </p>
+      <input type="file" id="planilhaPecasInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilhaPecas()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportPecasCard" style="display:none;">
+      <h2>Confirme as peças encontradas</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImportPecas"></p>
+      <table>
+        <thead><tr><th>Nome</th><th>Marca</th><th>Armazém</th><th>Carro</th></tr></thead>
+        <tbody id="tabelaPreviewImportPecas"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportPecas(event)">Importar todas</button>
+        <button class="secundario" onclick="document.getElementById('previewImportPecasCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Importar Nota Fiscal (entrada de peças)</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
@@ -81,6 +107,157 @@
 <script src="js/config.js"></script>
 <script src="js/nfe.js"></script>
 <script>
+// ============================================
+// IMPORTAÇÃO DE PEÇAS POR PLANILHA
+// ============================================
+let pecasParaImportar = [];
+
+const MAPA_COLUNAS_PECAS = {
+  nome: ['nome', 'produto', 'peça', 'peca', 'descrição', 'descricao'],
+  codigo: ['código', 'codigo'],
+  marca: ['marca'],
+  categoria: ['categoria', 'categoria/grupo'],
+  quantidadeArmazem: ['quantidade armazém', 'quantidade armazem', 'armazém', 'armazem', 'estoque'],
+  quantidadeCarro: ['quantidade carro', 'carro'],
+  estoqueIdealCarro: ['estoque ideal carro', 'meta carro'],
+  precoCusto: ['preço custo', 'preco custo'],
+  precoVenda: ['preço venda', 'preco venda'],
+  unidade: ['unidade'],
+};
+
+function identificarColunaPecas(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS_PECAS)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  return null;
+}
+
+function localizarCabecalhoEDadosPecas(workbook, sinonimosConhecidos) {
+  const aba = workbook.Sheets[workbook.SheetNames[0]];
+  const todasLinhas = XLSX.utils.sheet_to_json(aba, { header: 1, defval: '' });
+  let melhorLinha = 0, melhorPontuacao = -1;
+  for (let i = 0; i < Math.min(10, todasLinhas.length); i++) {
+    let pontuacao = 0;
+    (todasLinhas[i] || []).forEach(cel => {
+      const c = (cel || '').toString().trim().toLowerCase();
+      if (sinonimosConhecidos.has(c)) pontuacao++;
+    });
+    if (pontuacao > melhorPontuacao) { melhorPontuacao = pontuacao; melhorLinha = i; }
+  }
+  const cabecalhos = (todasLinhas[melhorLinha] || []).map(c => (c || '').toString().trim());
+  const linhas = todasLinhas.slice(melhorLinha + 1)
+    .map(linhaArr => {
+      const obj = {};
+      cabecalhos.forEach((cab, idx) => { if (cab) obj[cab] = linhaArr[idx] !== undefined ? linhaArr[idx] : ''; });
+      return obj;
+    })
+    .filter(obj => Object.values(obj).some(v => v !== ''));
+  return { cabecalhos, linhas };
+}
+
+function processarPlanilhaPecas() {
+  const input = document.getElementById('planilhaPecasInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const sinonimos = new Set(Object.values(MAPA_COLUNAS_PECAS).flat());
+      const { linhas } = localizarCabecalhoEDadosPecas(workbook, sinonimos);
+      if (linhas.length === 0) throw new Error('Planilha vazia ou não consegui encontrar a linha de cabeçalho.');
+
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapa = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColunaPecas(cab);
+        if (campo) mapa[campo] = cab;
+      });
+
+      if (!mapa.nome) throw new Error('Não encontrei uma coluna de "Nome" da peça. Verifique o título das colunas.');
+
+      pecasParaImportar = linhas.map(linha => ({
+        nome: (linha[mapa.nome] || '').toString().trim(),
+        codigo: mapa.codigo ? (linha[mapa.codigo] || '').toString().trim() : '',
+        marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
+        categoria: mapa.categoria ? (linha[mapa.categoria] || '').toString().trim() : '',
+        quantidade: mapa.quantidadeArmazem ? parseFloat(linha[mapa.quantidadeArmazem]) || 0 : 0,
+        quantidade_carro: mapa.quantidadeCarro ? parseFloat(linha[mapa.quantidadeCarro]) || 0 : 0,
+        estoque_ideal_carro: mapa.estoqueIdealCarro ? parseFloat(linha[mapa.estoqueIdealCarro]) || 0 : 0,
+        preco_custo: mapa.precoCusto ? parseFloat(linha[mapa.precoCusto]) || null : null,
+        preco_venda: mapa.precoVenda ? parseFloat(linha[mapa.precoVenda]) || null : null,
+        unidade: mapa.unidade ? (linha[mapa.unidade] || 'UN').toString().trim() : 'UN',
+      })).filter(p => p.nome);
+
+      exibirPreviewImportPecas();
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImportPecas() {
+  document.getElementById('previewImportPecasCard').style.display = 'block';
+  document.getElementById('resumoImportPecas').textContent = `${pecasParaImportar.length} peça(s) encontrada(s).`;
+  const tbody = document.getElementById('tabelaPreviewImportPecas');
+  tbody.innerHTML = '';
+  pecasParaImportar.slice(0, 300).forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.nome}</td><td>${p.marca || '-'}</td><td>${p.quantidade}</td><td>${p.quantidade_carro}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function confirmarImportPecas(event) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  try {
+    const { data: pecasExistentes } = await supabaseClient.from('pecas').select('id, nome, quantidade, quantidade_carro');
+    const mapaExistentes = {};
+    (pecasExistentes || []).forEach(p => { mapaExistentes[p.nome.trim().toLowerCase()] = p; });
+
+    const novasPecas = [];
+    const atualizacoes = [];
+
+    pecasParaImportar.forEach(p => {
+      const existente = mapaExistentes[p.nome.trim().toLowerCase()];
+      if (existente) {
+        atualizacoes.push({
+          id: existente.id,
+          quantidade: (parseFloat(existente.quantidade) || 0) + p.quantidade,
+          quantidade_carro: (parseFloat(existente.quantidade_carro) || 0) + p.quantidade_carro,
+        });
+      } else {
+        novasPecas.push(p);
+      }
+    });
+
+    if (novasPecas.length > 0) {
+      const { error } = await supabaseClient.from('pecas').insert(novasPecas);
+      if (error) throw error;
+    }
+
+    for (const upd of atualizacoes) {
+      await supabaseClient.from('pecas').update({ quantidade: upd.quantidade, quantidade_carro: upd.quantidade_carro }).eq('id', upd.id);
+    }
+
+    alert(`${novasPecas.length} peça(s) nova(s) criada(s), ${atualizacoes.length} peça(s) existente(s) atualizada(s) (quantidade somada).`);
+    document.getElementById('previewImportPecasCard').style.display = 'none';
+    document.getElementById('planilhaPecasInput').value = '';
+    pecasParaImportar = [];
+    carregarPecas();
+  } catch (err) {
+    alert('Erro ao importar: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar todas';
+  }
+}
+
 let itensImportados = [];
 let numeroNotaAtual = '';
 
