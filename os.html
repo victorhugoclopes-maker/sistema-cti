@@ -239,6 +239,7 @@ function preencherRapido(tipo) {
 
 let osParaImportar = [];
 let clientesMapaNomes = {}; // nome em minúsculo -> id
+let clientesMapaCNPJ = {}; // cnpj (só dígitos) -> id
 let equipamentosMapaSerie = {}; // "clienteId|numeroSerie" -> id
 
 const MAPA_COLUNAS_OS = {
@@ -330,9 +331,19 @@ async function processarPlanilhaOS() {
   const input = document.getElementById('planilhaOSInput');
   if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
 
-  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome');
+  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome, empresa');
   clientesMapaNomes = {};
-  (todosClientes || []).forEach(c => { clientesMapaNomes[c.nome.trim().toLowerCase()] = c.id; });
+  clientesMapaCNPJ = {};
+  (todosClientes || []).forEach(c => {
+    clientesMapaNomes[c.nome.trim().toLowerCase()] = c.id;
+    const digitos = (c.empresa || '').match(/\d[\d.\-\/]{12,}\d/g);
+    if (digitos) {
+      digitos.forEach(d => {
+        const limpo = d.replace(/\D/g, '');
+        if (limpo.length === 14) clientesMapaCNPJ[limpo] = c.id;
+      });
+    }
+  });
 
   const { data: todosEquipamentos } = await supabaseClient.from('equipamentos').select('id, cliente_id, numero_serie');
   equipamentosMapaSerie = {};
@@ -362,7 +373,10 @@ async function processarPlanilhaOS() {
       osParaImportar = linhas.map(linha => {
         const numeroOS = (linha[mapa.numeroOS] || '').toString().trim();
         const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
-        const clienteId = clientesMapaNomes[nomeCliente.trim().toLowerCase()] || null;
+        const cnpjCliente = mapa.cnpjCliente ? (linha[mapa.cnpjCliente] || '').toString().replace(/\D/g, '') : '';
+
+        let clienteId = clientesMapaNomes[nomeCliente.trim().toLowerCase()] || null;
+        if (!clienteId && cnpjCliente.length === 14) clienteId = clientesMapaCNPJ[cnpjCliente] || null;
         if (nomeCliente && !clienteId) semClienteVinculado++;
 
         const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
