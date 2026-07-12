@@ -672,9 +672,10 @@ async function processarPlanilhaOrcamento() {
         let equipamentoChave = null;
         if (!equipamentoId && clienteId && numeroSerie) {
           equipamentoChave = `${clienteId}|${numeroSerie.toLowerCase()}`;
-          if (mapaEquipSerie[equipamentoChave]) {
+          if (mapaEquipSerie[equipamentoChave] && mapaEquipSerie[equipamentoChave] !== 'PENDENTE') {
             equipamentoId = mapaEquipSerie[equipamentoChave];
-          } else {
+          } else if (!mapaEquipSerie[equipamentoChave]) {
+            // ainda não foi visto nessa importação — marca como pendente e enfileira criação (só a primeira vez)
             equipamentoNovo = {
               cliente_id: clienteId,
               tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
@@ -684,6 +685,8 @@ async function processarPlanilhaOrcamento() {
             };
             mapaEquipSerie[equipamentoChave] = 'PENDENTE';
           }
+          // se já está 'PENDENTE' (outra linha dessa mesma importação já enfileirou a criação),
+          // não faz nada aqui — o equipamento_id fica null por enquanto e é resolvido depois via equipamentoChave
         }
 
         return {
