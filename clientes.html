@@ -54,6 +54,11 @@
     <div class="card">
       <h2>⚠️ Zona de Perigo</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Remove clientes criados <b>automaticamente</b> por uma importação de OS que não achou vínculo (ficam marcados por dentro). Não mexe nos clientes que você importou/cadastrou manualmente.
+      </p>
+      <button class="perigo" onclick="iniciarRemocaoClientesAutoOS()">🗑️ Remover clientes criados automaticamente (importação de OS)</button>
+      <hr style="margin:16px 0;border:none;border-top:1px solid #e5e7eb;">
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
         Remove TODOS os clientes cadastrados (e os equipamentos vinculados a eles). Não afeta OS, vendas ou estoque já registrados. Essa ação não pode ser desfeita.
       </p>
       <button class="perigo" onclick="iniciarRemocaoTodosClientes()">🗑️ Remover TODOS os clientes</button>
@@ -256,6 +261,31 @@ async function confirmarImportClientes() {
   document.getElementById('previewImportCard').style.display = 'none';
   document.getElementById('planilhaInput').value = '';
   clientesParaImportar = [];
+  carregarClientes();
+}
+
+async function iniciarRemocaoClientesAutoOS() {
+  const { data: candidatos } = await supabaseClient.from('clientes').select('id').ilike('observacoes', '%[AUTO-OS]%');
+  const total = candidatos?.length || 0;
+  if (total === 0) { alert('Não há clientes marcados como criados automaticamente por importação de OS.'); return; }
+
+  const primeiraConfirmacao = confirm(
+    `Isso vai apagar ${total} cliente(s) criado(s) automaticamente por importações de OS (e os equipamentos deles). Os clientes que você cadastrou/importou manualmente NÃO são afetados. Tem certeza?`
+  );
+  if (!primeiraConfirmacao) return;
+
+  const textoDigitado = prompt('Pra confirmar de vez, digite REMOVER (em maiúsculas) e clique OK:');
+  if (textoDigitado !== 'REMOVER') {
+    alert('Cancelado. Nenhum cliente foi removido.');
+    return;
+  }
+
+  const { error } = await supabaseClient.from('clientes').delete().ilike('observacoes', '%[AUTO-OS]%');
+  if (error) {
+    alert('Erro ao remover: ' + error.message);
+    return;
+  }
+  alert(`${total} cliente(s) removido(s).`);
   carregarClientes();
 }
 

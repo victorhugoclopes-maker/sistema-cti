@@ -34,8 +34,9 @@
       </p>
       <input type="file" id="planilhaOSInput" accept=".xlsx,.xls,.csv">
       <div class="acoes">
-        <button onclick="processarPlanilhaOS()">Ler Planilha</button>
+        <button id="btnLerPlanilhaOS" onclick="processarPlanilhaOS()">Ler Planilha</button>
       </div>
+      <p id="progressoBuscaCNPJ" style="font-size:13px;color:#6b7280;margin-top:8px;"></p>
     </div>
 
     <div class="card" id="previewImportOSCard" style="display:none;">
@@ -74,6 +75,14 @@
         <button onclick="confirmarImportOrcamento(event)">Importar todos</button>
         <button class="secundario" onclick="document.getElementById('previewImportOrcamentoCard').style.display='none'">Cancelar</button>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>⚠️ Zona de Perigo</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Remove TODAS as Ordens de Serviço cadastradas (e as peças/itens vinculados a elas). Não afeta clientes, equipamentos, estoque ou vendas. Essa ação não pode ser desfeita.
+      </p>
+      <button class="perigo" onclick="iniciarRemocaoTodasOS()">🗑️ Remover TODAS as Ordens de Serviço</button>
     </div>
 
     <div class="card">
@@ -149,7 +158,20 @@
 
     <div class="card">
       <h2>Ordens de Serviço</h2>
-      <input type="text" id="buscaOS" placeholder="🔍 Buscar por nº OS, cliente ou status..." oninput="filtrarOS()" style="margin-bottom:14px;">
+      <input type="text" id="buscaOS" placeholder="🔍 Buscar por nº OS, cliente ou status..." oninput="filtrarOS()" style="margin-bottom:10px;">
+      <div class="form-grid" style="margin-bottom:10px;">
+        <div><label>Ano</label>
+          <select id="filtroAnoOS" onchange="filtrarOS()">
+            <option value="">Todos os anos</option>
+          </select>
+        </div>
+        <div><label>Ordenar por data</label>
+          <select id="ordemOS" onchange="filtrarOS()">
+            <option value="crescente">Mais antiga primeiro</option>
+            <option value="decrescente">Mais recente primeiro</option>
+          </select>
+        </div>
+      </div>
       <table>
         <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Data</th></tr></thead>
         <tbody id="tabelaOS"></tbody>
@@ -327,6 +349,44 @@ function localizarCabecalhoEDados(workbook, sinonimosConhecidos) {
   return { cabecalhos, linhas };
 }
 
+// Busca o nome real da empresa a partir do CNPJ, usando a base pública da Receita (BrasilAPI, gratuita)
+async function buscarNomeEmpresaPorCNPJ(cnpj) {
+  try {
+    const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
+    if (!resp.ok) return null;
+    const dados = await resp.json();
+    return dados.nome_fantasia || dados.razao_social || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// Pra cada cliente novo sem nome (só tinha CNPJ), tenta descobrir o nome de verdade
+async function enriquecerClientesSemNome(clientesNovosMapa) {
+  const chavesSemNome = Object.keys(clientesNovosMapa).filter(chave =>
+    clientesNovosMapa[chave].nome.startsWith('CNPJ ') && /^\d{14}$/.test(chave)
+  );
+  if (chavesSemNome.length === 0) return;
+
+  const statusEl = document.getElementById('progressoBuscaCNPJ');
+  for (let i = 0; i < chavesSemNome.length; i++) {
+    const chave = chavesSemNome[i];
+    if (statusEl) statusEl.textContent = `Buscando nome de empresas pelo CNPJ... (${i + 1}/${chavesSemNome.length})`;
+    const nomeReal = await buscarNomeEmpresaPorCNPJ(chave);
+    if (nomeReal) {
+      clientesNovosMapa[chave].nome = nomeReal;
+      clientesNovosMapa[chave].empresa = `${nomeReal} — ${chave}`;
+    } else {
+      // não achou na Receita — usa o nome da pessoa de contato como alternativa (melhor que mostrar só o CNPJ)
+      const match = (clientesNovosMapa[chave].observacoes || '').match(/Contato: ([^|]+)/);
+      if (match) clientesNovosMapa[chave].nome = match[1].trim();
+    }
+    // pausa entre chamadas pra respeitar o limite da API gratuita
+    await new Promise(r => setTimeout(r, 400));
+  }
+  if (statusEl) statusEl.textContent = '';
+}
+
 async function processarPlanilhaOS() {
   const input = document.getElementById('planilhaOSInput');
   if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
@@ -352,7 +412,7 @@ async function processarPlanilhaOS() {
   });
 
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const workbook = XLSX.read(e.target.result, { type: 'array' });
       const sinonimosOS = new Set(Object.values(MAPA_COLUNAS_OS).flat());
@@ -389,13 +449,13 @@ async function processarPlanilhaOS() {
           semClienteVinculado++;
           clienteChaveNovo = cnpjCliente || nomeCliente.toLowerCase();
           if (!clientesNovosMapa[clienteChaveNovo]) {
-            const extras = [];
+            const extras = ['[AUTO-OS]'];
             if (contato) extras.push(`Contato: ${contato}`);
             if (email) extras.push(`E-mail: ${email}`);
             if (cnpjCliente) extras.push(`CNPJ: ${cnpjCliente}`);
             clientesNovosMapa[clienteChaveNovo] = {
               nome: nomeCliente || `CNPJ ${cnpjCliente}`,
-              empresa: cnpjCliente ? `${nomeCliente} — ${cnpjCliente}` : nomeCliente,
+              empresa: cnpjCliente ? (nomeCliente ? `${nomeCliente} — ${cnpjCliente}` : cnpjCliente) : nomeCliente,
               telefone: celular,
               observacoes: extras.join(' | '),
             };
@@ -427,6 +487,8 @@ async function processarPlanilhaOS() {
         };
       }).filter(os => os.numero_os);
 
+      await enriquecerClientesSemNome(clientesNovosMapa);
+
       osParaImportar._clientesNovosMapa = clientesNovosMapa; // guarda junto pra usar na confirmação
       exibirPreviewImportOS(semClienteVinculado, clientesNovos);
     } catch (err) {
@@ -445,11 +507,15 @@ function exibirPreviewImportOS(semClienteVinculado, clientesNovos) {
   }
   document.getElementById('resumoImportOS').textContent = resumo;
 
+  const mapaClientesNovos = osParaImportar._clientesNovosMapa || {};
   const tbody = document.getElementById('tabelaPreviewImportOS');
   tbody.innerHTML = '';
   osParaImportar.slice(0, 500).forEach(os => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.cliente_nome_planilha || '-'}${os.cliente_chave_novo ? ' 🆕' : ''}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
+    const nomeExibir = os.cliente_chave_novo
+      ? (mapaClientesNovos[os.cliente_chave_novo]?.nome || os.cliente_nome_planilha || '-') + ' 🆕'
+      : (os.cliente_nome_planilha || '-');
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${nomeExibir}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
     tbody.appendChild(tr);
   });
   if (osParaImportar.length > 500) {
@@ -934,6 +1000,30 @@ async function excluirFrase(id) {
   renderizarListaFrases();
 }
 
+async function iniciarRemocaoTodasOS() {
+  const { count } = await supabaseClient.from('ordens_servico').select('*', { count: 'exact', head: true });
+  if (!count) { alert('Não há OS cadastradas.'); return; }
+
+  const primeiraConfirmacao = confirm(
+    `Isso vai apagar TODAS as ${count} Ordens de Serviço cadastradas (e as peças/itens vinculados a elas). Essa ação NÃO pode ser desfeita. Tem certeza que quer continuar?`
+  );
+  if (!primeiraConfirmacao) return;
+
+  const textoDigitado = prompt('Pra confirmar de vez, digite REMOVER (em maiúsculas) e clique OK:');
+  if (textoDigitado !== 'REMOVER') {
+    alert('Cancelado. Nenhuma OS foi removida.');
+    return;
+  }
+
+  const { error } = await supabaseClient.from('ordens_servico').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if (error) {
+    alert('Erro ao remover: ' + error.message);
+    return;
+  }
+  alert('Todas as Ordens de Serviço foram removidas.');
+  carregarOS();
+}
+
 let todasOSCache = [];
 
 async function carregarOS() {
@@ -942,7 +1032,16 @@ async function carregarOS() {
     .select('*, clientes(nome)')
     .order('criado_em', { ascending: false });
   todasOSCache = data || [];
-  renderizarTabelaOS(todasOSCache);
+  popularFiltroAnoOS();
+  filtrarOS();
+}
+
+function popularFiltroAnoOS() {
+  const anos = [...new Set(todasOSCache.map(os => os.data_abertura ? os.data_abertura.slice(0, 4) : null).filter(Boolean))].sort((a, b) => b - a);
+  const select = document.getElementById('filtroAnoOS');
+  const valorAtual = select.value;
+  select.innerHTML = '<option value="">Todos os anos</option>' + anos.map(a => `<option value="${a}">${a}</option>`).join('');
+  select.value = valorAtual;
 }
 
 function renderizarTabelaOS(lista) {
@@ -964,13 +1063,24 @@ function renderizarTabelaOS(lista) {
 
 function filtrarOS() {
   const termo = document.getElementById('buscaOS').value.trim().toLowerCase();
-  if (!termo) { renderizarTabelaOS(todasOSCache); return; }
-  const filtradas = todasOSCache.filter(os =>
-    (os.numero_os || '').toLowerCase().includes(termo) ||
-    (os.clientes?.nome || '').toLowerCase().includes(termo) ||
-    (os.cliente_nome_texto || '').toLowerCase().includes(termo) ||
-    (os.status || '').toLowerCase().includes(termo)
+  const ano = document.getElementById('filtroAnoOS').value;
+  const ordem = document.getElementById('ordemOS').value;
+
+  let filtradas = todasOSCache.filter(os =>
+    (!termo ||
+      (os.numero_os || '').toLowerCase().includes(termo) ||
+      (os.clientes?.nome || '').toLowerCase().includes(termo) ||
+      (os.cliente_nome_texto || '').toLowerCase().includes(termo) ||
+      (os.status || '').toLowerCase().includes(termo)
+    ) && (!ano || (os.data_abertura && os.data_abertura.startsWith(ano)))
   );
+
+  filtradas = filtradas.slice().sort((a, b) => {
+    const dataA = a.data_abertura || '0000-00-00';
+    const dataB = b.data_abertura || '0000-00-00';
+    return ordem === 'crescente' ? dataA.localeCompare(dataB) : dataB.localeCompare(dataA);
+  });
+
   renderizarTabelaOS(filtradas);
 }
 
