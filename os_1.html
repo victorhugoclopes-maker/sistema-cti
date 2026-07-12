@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTI Máquinas - Ordens de Serviço</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CTI Máquinas</h1>
+    <nav>
+      <a href="dashboard.html">Início</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="os.html" class="ativo">Ordens de Serviço</a>
+      <a href="estoque.html">Estoque</a>
+      <a href="vendas.html">Vendas</a>
+      <a href="lacres.html">Lacres</a>
+      <a href="relatorios.html">Relatórios</a>
+      <a href="exportar.html">Exportar</a>
+      <a href="validador.html">Validador MGV</a>
+      <a href="#" onclick="fazerLogout()">Sair</a>
+    </nav>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>Importar Ordens de Serviço de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita .xlsx ou .csv. Reconhece colunas como <b>Nº OS</b>, <b>Cliente</b>, <b>Orçamento</b>, <b>Valor</b>, <b>Status</b>, <b>Data Entrada/Saída</b>, <b>Defeito</b>, <b>Causa</b>, <b>Peças/Serviço</b>, <b>Técnico</b>, <b>Produto/Marca/Nº Série</b>.
+        O cliente é vinculado automaticamente se o nome bater com um cliente já cadastrado, e os equipamentos (pelo Nº de Série) são criados automaticamente se ainda não existirem.
+      </p>
+      <input type="file" id="planilhaOSInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilhaOS()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportOSCard" style="display:none;">
+      <h2>Confirme as OS encontradas</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImportOS"></p>
+      <table>
+        <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Valor</th></tr></thead>
+        <tbody id="tabelaPreviewImportOS"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportOS(event)">Importar todas</button>
+        <button class="secundario" onclick="document.getElementById('previewImportOSCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Importar Orçamentos de Planilha</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Aceita .xlsx ou .csv com colunas de itens (Item 1 Descrição/Valor, Item 2..., até Item 8), além de Nº Orç, Cliente, CNPJ, Produto/Marca/Série, Defeito, Técnico, TOTAL e <b>Nº OS Ref.</b>
+        Quando o "Nº OS Ref." bater com uma OS já existente, os itens são adicionados nela. Quando não bater, uma nova OS é criada.
+      </p>
+      <input type="file" id="planilhaOrcamentoInput" accept=".xlsx,.xls,.csv">
+      <div class="acoes">
+        <button onclick="processarPlanilhaOrcamento()">Ler Planilha</button>
+      </div>
+    </div>
+
+    <div class="card" id="previewImportOrcamentoCard" style="display:none;">
+      <h2>Confirme os orçamentos encontrados</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;" id="resumoImportOrcamento"></p>
+      <table>
+        <thead><tr><th>Nº Orç</th><th>Vínculo com OS</th><th>Cliente</th><th>Total</th></tr></thead>
+        <tbody id="tabelaPreviewImportOrcamento"></tbody>
+      </table>
+      <div class="acoes">
+        <button onclick="confirmarImportOrcamento(event)">Importar todos</button>
+        <button class="secundario" onclick="document.getElementById('previewImportOrcamentoCard').style.display='none'">Cancelar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="tituloForm">Nova Ordem de Serviço</h2>
+      <input type="hidden" id="osId">
+      <div class="form-grid">
+        <div><label>Nº da OS</label><input id="numeroOS"></div>
+        <div><label>Orçamento (igual ao Nº OS)</label><input id="orcamento"></div>
+        <div>
+          <label>Cliente</label>
+          <select id="clienteSelect" onchange="carregarEquipamentosDoCliente()"><option value="">Selecione...</option></select>
+        </div>
+        <div>
+          <label>Equipamento</label>
+          <select id="equipamentoSelect"><option value="">Selecione o cliente primeiro</option></select>
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="status">
+            <option value="aberta">Aberta</option>
+            <option value="em_andamento">Em andamento</option>
+            <option value="concluida">Concluída</option>
+          </select>
+        </div>
+        <div><label>Mão de obra (R$)</label><input type="number" id="maoDeObra" min="0" step="0.01" value="0" onchange="calcularOrcamento()"></div>
+      </div>
+      <label style="margin-top:8px;">Preenchimento rápido</label>
+      <div class="acoes" style="margin-bottom:10px;">
+        <button type="button" class="secundario" onclick="preencherRapido('calibracao')">⚖️ Calibração</button>
+        <button type="button" class="secundario" onclick="preencherRapido('celula')">🔧 Célula de carga</button>
+        <button type="button" class="secundario" onclick="preencherRapido('placa')">🔌 Placa eletrônica</button>
+        <button type="button" class="secundario" onclick="preencherRapido('bateria')">🔋 Bateria</button>
+        <button type="button" class="secundario" onclick="preencherRapido('preventiva')">🧹 Manutenção preventiva</button>
+        <button type="button" class="secundario" onclick="preencherRapido('visita')">🚗 Visita sem reparo</button>
+      </div>
+      <label>Descrição do defeito <button type="button" class="secundario" onclick="abrirGerenciadorFrases()" style="font-size:11px;padding:3px 8px;margin-left:6px;">⚙️ Gerenciar frases prontas</button></label>
+      <div style="position:relative;">
+        <textarea id="descricaoDefeito" oninput="mostrarSugestoes('descricaoDefeito', 'defeito')" onblur="setTimeout(() => esconderSugestoes('sugestoesDefeito'), 200)"></textarea>
+        <div id="sugestoesDefeito" class="caixa-sugestoes" style="display:none;"></div>
+      </div>
+      <label>Causa</label>
+      <input id="causa" list="listaCausas" placeholder="Ex: célula de carga, placa eletrônica, fonte, display...">
+      <datalist id="listaCausas"></datalist>
+      <label>Serviço realizado</label>
+      <div style="position:relative;">
+        <textarea id="servicoRealizado" oninput="mostrarSugestoes('servicoRealizado', 'servico')" onblur="setTimeout(() => esconderSugestoes('sugestoesServico'), 200)"></textarea>
+        <div id="sugestoesServico" class="caixa-sugestoes" style="display:none;"></div>
+      </div>
+      <button type="button" class="secundario" onclick="preencherServicoAutomatico()" style="margin-bottom:10px;">✏️ Preencher automaticamente com base nas peças</button>
+
+      <label style="margin-top:8px;">Peças utilizadas</label>
+      <p style="font-size:12px;color:#6b7280;margin-bottom:8px;">
+        Digite o nome livremente. Se bater com uma peça do estoque, o preço é preenchido sozinho (pode ajustar se precisar) e o valor total é calculado automaticamente.
+      </p>
+      <table style="margin-bottom:10px;">
+        <thead><tr><th>Peça</th><th style="width:80px;">Qtd</th><th style="width:100px;">Valor unit.</th><th style="width:40px;"></th></tr></thead>
+        <tbody id="tabelaPecasUsadas"></tbody>
+      </table>
+      <button type="button" class="secundario" onclick="adicionarLinhaPeca()">+ Adicionar peça</button>
+
+      <p style="margin-top:14px;font-size:14px;color:#374151;">
+        Peças: <span id="totalPecas">R$ 0,00</span> &nbsp;+&nbsp; Mão de obra: <span id="totalMaoDeObra">R$ 0,00</span>
+      </p>
+      <p style="font-weight:bold;font-size:18px;">Orçamento total: <span id="totalOrcamento">R$ 0,00</span></p>
+
+      <div class="acoes" style="margin-top:16px;">
+        <button onclick="salvarOS()">Salvar</button>
+        <button class="secundario" onclick="limparForm()">Limpar</button>
+        <button class="secundario" id="btnImprimir" onclick="imprimirOSAtual()" style="display:none;">🖨️ Imprimir OS</button>
+        <button class="secundario" id="btnOrcamento" onclick="gerarOrcamentoAtual()" style="display:none;">💰 Gerar Orçamento</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ordens de Serviço</h2>
+      <input type="text" id="buscaOS" placeholder="🔍 Buscar por nº OS, cliente ou status..." oninput="filtrarOS()" style="margin-bottom:14px;">
+      <table>
+        <thead><tr><th>Nº OS</th><th>Cliente</th><th>Status</th><th>Data</th></tr></thead>
+        <tbody id="tabelaOS"></tbody>
+      </table>
+    </div>
+  </div>
+
+<div id="modalFrases" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:100;">
+  <div style="background:white;max-width:600px;margin:40px auto;padding:20px;border-radius:8px;max-height:80vh;overflow-y:auto;">
+    <h2>Gerenciar Frases Prontas</h2>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:14px;">Cadastre frases que aparecem como sugestão enquanto você digita nos campos de Causa, Descrição do Defeito e Serviço Realizado.</p>
+
+    <div class="form-grid">
+      <div>
+        <label>Campo</label>
+        <select id="novaFraseCampo">
+          <option value="causa">Causa</option>
+          <option value="defeito">Descrição do Defeito</option>
+          <option value="servico">Serviço Realizado</option>
+        </select>
+      </div>
+      <div><label>Texto da frase</label><input id="novaFraseTexto" placeholder="Digite a frase pronta"></div>
+    </div>
+    <div class="acoes"><button onclick="salvarNovaFrase()">+ Adicionar Frase</button></div>
+
+    <h2 style="margin-top:20px;">Frases cadastradas</h2>
+    <div id="listaFrasesCadastradas"></div>
+
+    <button class="secundario" onclick="document.getElementById('modalFrases').style.display='none'" style="margin-top:14px;">Fechar</button>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script>
+const PRESETS_RAPIDOS = {
+  calibracao: {
+    causa: 'Descalibração',
+    defeito: 'Balança apresentando peso fora do padrão / descalibrada.',
+    servico: 'Realizada calibração conforme padrão de referência. Equipamento testado e aprovado.',
+    peca: null,
+  },
+  celula: {
+    causa: 'Célula de carga',
+    defeito: 'Peso instável, oscilando ou zerando sozinho.',
+    servico: '',
+    peca: 'Célula de carga',
+  },
+  placa: {
+    causa: 'Placa eletrônica',
+    defeito: 'Display não liga, travando ou apresentando erro.',
+    servico: '',
+    peca: 'Placa eletrônica',
+  },
+  bateria: {
+    causa: 'Bateria',
+    defeito: 'Balança não liga ou não segura carga.',
+    servico: '',
+    peca: 'Bateria',
+  },
+  preventiva: {
+    causa: 'Manutenção preventiva',
+    defeito: 'Manutenção preventiva agendada.',
+    servico: 'Realizada limpeza, lubrificação e testes gerais no equipamento.',
+    peca: null,
+  },
+  visita: {
+    causa: '',
+    defeito: 'Visita técnica solicitada pelo cliente.',
+    servico: 'Visita realizada, equipamento testado, sem necessidade de reparo no momento.',
+    peca: null,
+  },
+};
+
+function preencherRapido(tipo) {
+  const preset = PRESETS_RAPIDOS[tipo];
+  if (!preset) return;
+  document.getElementById('causa').value = preset.causa;
+  document.getElementById('descricaoDefeito').value = preset.defeito;
+  if (preset.servico) document.getElementById('servicoRealizado').value = preset.servico;
+  if (preset.peca) {
+    adicionarLinhaPeca(preset.peca, 1, 0);
+    const linhas = document.querySelectorAll('#tabelaPecasUsadas tr');
+    const ultimaLinha = linhas[linhas.length - 1];
+    if (ultimaLinha) buscarPrecoPeca(ultimaLinha.querySelector('.peca-nome'));
+  }
+}
+
+let osParaImportar = [];
+let clientesMapaNomes = {}; // nome em minúsculo -> id
+let equipamentosMapaSerie = {}; // "clienteId|numeroSerie" -> id
+
+const MAPA_COLUNAS_OS = {
+  numeroOS: ['nº os', 'no os', 'numero os', 'número os', 'os', 'ordem de serviço'],
+  cliente: ['cliente', 'nome do cliente', 'empresa', 'cliente / empresa', 'cliente/empresa'],
+  cnpjCliente: ['cnpj cliente', 'cnpj'],
+  contato: ['contato', 'contato / dono', 'dono'],
+  celular: ['celular', 'telefone'],
+  email: ['email', 'e-mail'],
+  orcamento: ['orçamento', 'orcamento', 'nº orçamento', 'no orçamento', 'numero orçamento'],
+  valor: ['valor', 'valor total', 'total', 'valor (r$)'],
+  status: ['status', 'situação', 'situacao'],
+  dataAbertura: ['data abertura', 'data de entrada', 'data entrada', 'data'],
+  dataConclusao: ['data conclusão', 'data conclusao', 'data de saída', 'data de saida', 'data saída', 'data saida'],
+  defeito: ['descrição defeito', 'descrição do defeito', 'defeito'],
+  causa: ['causa'],
+  servico: ['serviço realizado', 'servico realizado', 'peças / serviço', 'peças/serviço', 'pecas/servico'],
+  tecnico: ['técnico', 'tecnico', 'técnico cti', 'tecnico cti'],
+  produto: ['produto'],
+  marca: ['marca'],
+  capacidade: ['capacidade'],
+  numeroSerie: ['nº série', 'no série', 'numero série', 'número série', 'nº serie', 'numero serie'],
+};
+
+function identificarColunaOS(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS_OS)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  return null;
+}
+
+function normalizarStatus(valor) {
+  const v = (valor || '').toString().trim().toLowerCase();
+  if (v.includes('andamento')) return 'em_andamento';
+  if (v.includes('conclu') || v.includes('finaliz') || v.includes('entregue')) return 'concluida';
+  return 'aberta';
+}
+
+function converterDataPlanilha(valor) {
+  if (!valor) return null;
+  if (typeof valor === 'string' && (valor.includes('/') || valor.includes('.'))) {
+    const separador = valor.includes('/') ? '/' : '.';
+    const partes = valor.split(separador);
+    if (partes.length === 3) {
+      let [dia, mes, ano] = partes;
+      if (ano.length === 2) ano = '20' + ano;
+      if (dia.length <= 2 && mes.length <= 2 && ano.length === 4) {
+        return `${ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
+      }
+    }
+  }
+  if (typeof valor === 'number') {
+    const data = XLSX.SSF.parse_date_code(valor);
+    if (data) return `${data.y}-${String(data.m).padStart(2,'0')}-${String(data.d).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+// Encontra a linha de cabeçalho de verdade, mesmo que a planilha tenha uma linha de título antes
+// (compara cada uma das primeiras linhas com os nomes de coluna conhecidos e usa a que mais bater)
+function localizarCabecalhoEDados(workbook, sinonimosConhecidos) {
+  const aba = workbook.Sheets[workbook.SheetNames[0]];
+  const todasLinhas = XLSX.utils.sheet_to_json(aba, { header: 1, defval: '' });
+
+  let melhorLinha = 0, melhorPontuacao = -1;
+  for (let i = 0; i < Math.min(10, todasLinhas.length); i++) {
+    let pontuacao = 0;
+    (todasLinhas[i] || []).forEach(cel => {
+      const c = (cel || '').toString().trim().toLowerCase();
+      if (sinonimosConhecidos.has(c)) pontuacao++;
+    });
+    if (pontuacao > melhorPontuacao) { melhorPontuacao = pontuacao; melhorLinha = i; }
+  }
+
+  const cabecalhos = (todasLinhas[melhorLinha] || []).map(c => (c || '').toString().trim());
+  const linhas = todasLinhas.slice(melhorLinha + 1)
+    .map(linhaArr => {
+      const obj = {};
+      cabecalhos.forEach((cab, idx) => { if (cab) obj[cab] = linhaArr[idx] !== undefined ? linhaArr[idx] : ''; });
+      return obj;
+    })
+    .filter(obj => Object.values(obj).some(v => v !== ''));
+
+  return { cabecalhos, linhas };
+}
+
+async function processarPlanilhaOS() {
+  const input = document.getElementById('planilhaOSInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome');
+  clientesMapaNomes = {};
+  (todosClientes || []).forEach(c => { clientesMapaNomes[c.nome.trim().toLowerCase()] = c.id; });
+
+  const { data: todosEquipamentos } = await supabaseClient.from('equipamentos').select('id, cliente_id, numero_serie');
+  equipamentosMapaSerie = {};
+  (todosEquipamentos || []).forEach(e => {
+    if (e.numero_serie) equipamentosMapaSerie[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
+  });
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const sinonimosOS = new Set(Object.values(MAPA_COLUNAS_OS).flat());
+      const { linhas } = localizarCabecalhoEDados(workbook, sinonimosOS);
+      if (linhas.length === 0) throw new Error('Planilha vazia ou não consegui encontrar a linha de cabeçalho.');
+
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapa = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColunaOS(cab);
+        if (campo) mapa[campo] = cab;
+      });
+
+      if (!mapa.numeroOS) throw new Error('Não encontrei uma coluna de "Nº OS". Verifique o título das colunas.');
+
+      let semClienteVinculado = 0;
+      let equipamentosNovos = 0;
+      osParaImportar = linhas.map(linha => {
+        const numeroOS = (linha[mapa.numeroOS] || '').toString().trim();
+        const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
+        const clienteId = clientesMapaNomes[nomeCliente.trim().toLowerCase()] || null;
+        if (nomeCliente && !clienteId) semClienteVinculado++;
+
+        const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
+        let equipamentoId = null;
+        let equipamentoNovo = null;
+        if (clienteId && numeroSerie) {
+          const chave = `${clienteId}|${numeroSerie.toLowerCase()}`;
+          if (equipamentosMapaSerie[chave]) {
+            equipamentoId = equipamentosMapaSerie[chave];
+          } else {
+            equipamentoNovo = {
+              cliente_id: clienteId,
+              tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
+              marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
+              capacidade: mapa.capacidade ? (linha[mapa.capacidade] || '').toString().trim() : '',
+              numero_serie: numeroSerie,
+            };
+            equipamentosMapaSerie[chave] = 'PENDENTE'; // marca como já vai ser criado, evita duplicar na mesma importação
+            equipamentosNovos++;
+          }
+        }
+
+        return {
+          numero_os: numeroOS,
+          orcamento: mapa.orcamento ? (linha[mapa.orcamento] || '').toString().trim() : numeroOS,
+          cliente_id: clienteId,
+          cliente_nome_texto: clienteId ? null : nomeCliente,
+          cliente_nome_planilha: nomeCliente,
+          equipamento_id: equipamentoId,
+          equipamento_novo: equipamentoNovo,
+          equipamento_chave: (clienteId && numeroSerie) ? `${clienteId}|${numeroSerie.toLowerCase()}` : null,
+          status: mapa.status ? normalizarStatus(linha[mapa.status]) : 'concluida',
+          valor: mapa.valor ? parseFloat(linha[mapa.valor]) || 0 : 0,
+          data_abertura: mapa.dataAbertura ? converterDataPlanilha(linha[mapa.dataAbertura]) : null,
+          data_conclusao: mapa.dataConclusao ? converterDataPlanilha(linha[mapa.dataConclusao]) : null,
+          descricao_defeito: mapa.defeito ? (linha[mapa.defeito] || '').toString().trim() : '',
+          causa: mapa.causa ? (linha[mapa.causa] || '').toString().trim() : '',
+          servico_realizado: mapa.servico ? (linha[mapa.servico] || '').toString().trim() : '',
+          tecnico: mapa.tecnico ? (linha[mapa.tecnico] || '').toString().trim() : '',
+        };
+      }).filter(os => os.numero_os);
+
+      exibirPreviewImportOS(semClienteVinculado, equipamentosNovos);
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImportOS(semClienteVinculado, equipamentosNovos) {
+  document.getElementById('previewImportOSCard').style.display = 'block';
+  let resumo = `${osParaImportar.length} OS encontrada(s).`;
+  if (equipamentosNovos > 0) resumo += ` 🆕 ${equipamentosNovos} equipamento(s) novo(s) serão criados automaticamente.`;
+  if (semClienteVinculado > 0) {
+    resumo += ` ⚠️ ${semClienteVinculado} não têm cliente correspondente cadastrado (serão importadas sem cliente vinculado — você pode ajustar manualmente depois).`;
+  }
+  document.getElementById('resumoImportOS').textContent = resumo;
+
+  const tbody = document.getElementById('tabelaPreviewImportOS');
+  tbody.innerHTML = '';
+  osParaImportar.slice(0, 500).forEach(os => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.cliente_nome_planilha || '-'}${!os.cliente_id && os.cliente_nome_planilha ? ' ⚠️' : ''}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+  if (osParaImportar.length > 500) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="4" class="vazio">... e mais ${osParaImportar.length - 500} OS (prévia limitada a 500 linhas, mas todas serão importadas)</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function confirmarImportOS(event) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  try {
+    // 1. Cria os equipamentos novos primeiro (deduplicados pela chave cliente+série)
+    const equipamentosParaCriar = [];
+    const chavesJaAdicionadas = new Set();
+    osParaImportar.forEach(os => {
+      if (os.equipamento_novo && os.equipamento_chave && !chavesJaAdicionadas.has(os.equipamento_chave)) {
+        equipamentosParaCriar.push({ chave: os.equipamento_chave, dados: os.equipamento_novo });
+        chavesJaAdicionadas.add(os.equipamento_chave);
+      }
+    });
+
+    const mapaChaveParaId = {};
+    if (equipamentosParaCriar.length > 0) {
+      const { data: criados, error: erroEquip } = await supabaseClient
+        .from('equipamentos')
+        .insert(equipamentosParaCriar.map(e => e.dados))
+        .select('id, cliente_id, numero_serie');
+      if (erroEquip) throw erroEquip;
+      criados.forEach(e => {
+        mapaChaveParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
+      });
+    }
+
+    // 2. Monta os registros finais de OS, já com equipamento_id resolvido
+    const registros = osParaImportar.map(os => {
+      const { cliente_nome_planilha, equipamento_novo, equipamento_chave, ...resto } = os;
+      if (!resto.equipamento_id && equipamento_chave && mapaChaveParaId[equipamento_chave]) {
+        resto.equipamento_id = mapaChaveParaId[equipamento_chave];
+      }
+      return resto;
+    });
+
+    // 3. Insere em lotes de 500 (evita payload gigante numa importação de milhares de linhas)
+    const TAMANHO_LOTE = 500;
+    for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
+      const lote = registros.slice(i, i + TAMANHO_LOTE);
+      const { error } = await supabaseClient.from('ordens_servico').insert(lote);
+      if (error) throw error;
+    }
+
+    alert(`${registros.length} OS importada(s) com sucesso! ${equipamentosParaCriar.length} equipamento(s) novo(s) criado(s).`);
+    document.getElementById('previewImportOSCard').style.display = 'none';
+    document.getElementById('planilhaOSInput').value = '';
+    osParaImportar = [];
+    carregarOS();
+  } catch (err) {
+    alert('Erro ao importar: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar todas';
+  }
+}
+
+// ============================================
+// IMPORTAÇÃO DE ORÇAMENTOS
+// ============================================
+let orcamentosParaImportar = [];
+let orcamentosItensParaImportar = [];
+
+const MAPA_COLUNAS_ORCAMENTO = {
+  numeroOrc: ['nº orç', 'no orç', 'numero orc', 'número orç', 'nº orc'],
+  data: ['data'],
+  cliente: ['cliente / empresa', 'cliente/empresa', 'cliente', 'empresa'],
+  cnpj: ['cnpj'],
+  contato: ['contato'],
+  celular: ['celular', 'telefone'],
+  email: ['email cliente', 'email', 'e-mail'],
+  produto: ['produto'],
+  marca: ['marca'],
+  capacidade: ['cap.', 'capacidade'],
+  numeroSerie: ['nº série', 'no série', 'numero série', 'número série', 'nº serie'],
+  defeito: ['descrição do defeito', 'defeito'],
+  desconto: ['desconto (r$)', 'desconto'],
+  total: ['total (r$)', 'total'],
+  tecnico: ['técnico cti', 'tecnico cti', 'técnico', 'tecnico'],
+  numeroOSRef: ['nº os ref.', 'no os ref.', 'nº os ref', 'numero os ref'],
+  formaPagamento: ['forma pagto', 'forma de pagamento'],
+};
+
+function identificarColunaOrcamento(cabecalho) {
+  const c = cabecalho.trim().toLowerCase();
+  for (const [campo, opcoes] of Object.entries(MAPA_COLUNAS_ORCAMENTO)) {
+    if (opcoes.includes(c)) return campo;
+  }
+  // detecta colunas "Item N — Descrição" e "Item N — Valor" dinamicamente
+  const matchDesc = c.match(/^item\s*(\d+)\s*[-—]\s*descri/);
+  if (matchDesc) return `itemDesc${matchDesc[1]}`;
+  const matchValor = c.match(/^item\s*(\d+)\s*[-—]\s*valor/);
+  if (matchValor) return `itemValor${matchValor[1]}`;
+  return null;
+}
+
+async function processarPlanilhaOrcamento() {
+  const input = document.getElementById('planilhaOrcamentoInput');
+  if (!input.files.length) { alert('Selecione um arquivo primeiro'); return; }
+
+  const { data: todosClientes } = await supabaseClient.from('clientes').select('id, nome, empresa');
+  const mapaNomes = {};
+  const mapaCNPJ = {};
+  (todosClientes || []).forEach(c => {
+    mapaNomes[c.nome.trim().toLowerCase()] = c.id;
+    const digitos = (c.empresa || '').match(/\d[\d.\-\/]{12,}\d/g);
+    if (digitos) {
+      digitos.forEach(d => {
+        const limpo = d.replace(/\D/g, '');
+        if (limpo.length === 14) mapaCNPJ[limpo] = c.id;
+      });
+    }
+  });
+
+  const { data: todasOS } = await supabaseClient.from('ordens_servico').select('id, numero_os, cliente_id, equipamento_id');
+  const mapaOSPorNumero = {};
+  (todasOS || []).forEach(os => { mapaOSPorNumero[os.numero_os.trim()] = os; });
+
+  const { data: todosEquipamentos } = await supabaseClient.from('equipamentos').select('id, cliente_id, numero_serie');
+  const mapaEquipSerie = {};
+  (todosEquipamentos || []).forEach(e => {
+    if (e.numero_serie) mapaEquipSerie[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
+  });
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const sinonimosOrcamento = new Set(Object.values(MAPA_COLUNAS_ORCAMENTO).flat());
+      const { linhas } = localizarCabecalhoEDados(workbook, sinonimosOrcamento);
+      if (linhas.length === 0) throw new Error('Planilha vazia ou não consegui encontrar a linha de cabeçalho.');
+
+      const cabecalhos = Object.keys(linhas[0]);
+      const mapa = {};
+      cabecalhos.forEach(cab => {
+        const campo = identificarColunaOrcamento(cab);
+        if (campo) mapa[campo] = cab;
+      });
+
+      if (!mapa.numeroOrc) throw new Error('Não encontrei uma coluna de "Nº Orç". Verifique o título das colunas.');
+
+      let vinculadas = 0, novas = 0, semCliente = 0;
+
+      orcamentosParaImportar = linhas.map(linha => {
+        const numeroOrc = (linha[mapa.numeroOrc] || '').toString().trim();
+        const numeroOSRef = mapa.numeroOSRef ? (linha[mapa.numeroOSRef] || '').toString().trim() : '';
+        const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
+        const cnpj = mapa.cnpj ? (linha[mapa.cnpj] || '').toString().replace(/\D/g, '') : '';
+
+        let clienteId = null;
+        if (nomeCliente) clienteId = mapaNomes[nomeCliente.toLowerCase()] || null;
+        if (!clienteId && cnpj.length === 14) clienteId = mapaCNPJ[cnpj] || null;
+
+        const osExistente = numeroOSRef ? mapaOSPorNumero[numeroOSRef] : null;
+        if (osExistente) vinculadas++; else novas++;
+        if (!clienteId && !osExistente) semCliente++;
+
+        // monta os itens (até 8), ignorando linhas fantasmas tipo "Total"
+        const itens = [];
+        for (let i = 1; i <= 8; i++) {
+          const desc = mapa[`itemDesc${i}`] ? (linha[mapa[`itemDesc${i}`]] || '').toString().trim() : '';
+          const valor = mapa[`itemValor${i}`] ? parseFloat(linha[mapa[`itemValor${i}`]]) || 0 : 0;
+          if (desc && desc.toLowerCase() !== 'total' && valor >= 0) {
+            itens.push({ nome_peca: desc, quantidade: 1, valor_unitario: valor });
+          }
+        }
+
+        const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
+        let equipamentoId = osExistente?.equipamento_id || null;
+        let equipamentoNovo = null;
+        let equipamentoChave = null;
+        if (!equipamentoId && clienteId && numeroSerie) {
+          equipamentoChave = `${clienteId}|${numeroSerie.toLowerCase()}`;
+          if (mapaEquipSerie[equipamentoChave]) {
+            equipamentoId = mapaEquipSerie[equipamentoChave];
+          } else {
+            equipamentoNovo = {
+              cliente_id: clienteId,
+              tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
+              marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
+              capacidade: mapa.capacidade ? (linha[mapa.capacidade] || '').toString().trim() : '',
+              numero_serie: numeroSerie,
+            };
+            mapaEquipSerie[equipamentoChave] = 'PENDENTE';
+          }
+        }
+
+        return {
+          numero_os: numeroOSRef || `ORC-${numeroOrc}`,
+          orcamento: numeroOrc,
+          cliente_id: osExistente?.cliente_id || clienteId,
+          cliente_nome_texto: (osExistente?.cliente_id || clienteId) ? null : nomeCliente,
+          equipamento_id: equipamentoId,
+          equipamento_novo: equipamentoNovo,
+          equipamento_chave: equipamentoChave,
+          ja_existe: !!osExistente,
+          os_id_existente: osExistente?.id || null,
+          status: 'concluida',
+          valor: mapa.total ? parseFloat(linha[mapa.total]) || 0 : 0,
+          data_abertura: mapa.data ? converterDataPlanilha(linha[mapa.data]) : null,
+          descricao_defeito: mapa.defeito ? (linha[mapa.defeito] || '').toString().trim() : '',
+          tecnico: mapa.tecnico ? (linha[mapa.tecnico] || '').toString().trim() : '',
+          itens,
+          cliente_nome_planilha: nomeCliente,
+        };
+      }).filter(o => o.orcamento);
+
+      exibirPreviewImportOrcamento(vinculadas, novas, semCliente);
+    } catch (err) {
+      alert('Erro ao ler a planilha: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(input.files[0]);
+}
+
+function exibirPreviewImportOrcamento(vinculadas, novas, semCliente) {
+  document.getElementById('previewImportOrcamentoCard').style.display = 'block';
+  document.getElementById('resumoImportOrcamento').textContent =
+    `${orcamentosParaImportar.length} orçamento(s) encontrado(s). ${vinculadas} serão adicionados a OS já existentes, ${novas} vão criar OS novas. ⚠️ ${semCliente} sem cliente identificado.`;
+
+  const tbody = document.getElementById('tabelaPreviewImportOrcamento');
+  tbody.innerHTML = '';
+  orcamentosParaImportar.slice(0, 500).forEach(o => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${o.orcamento}</td><td>${o.ja_existe ? '🔗 OS ' + o.numero_os : '🆕 nova'}</td>
+      <td>${o.cliente_nome_planilha || '-'}</td><td>R$ ${o.valor.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+  if (orcamentosParaImportar.length > 500) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="4" class="vazio">... e mais ${orcamentosParaImportar.length - 500} (prévia limitada, mas todos serão importados)</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function confirmarImportOrcamento(event) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  try {
+    // 1. Cria equipamentos novos (deduplicados)
+    const equipamentosParaCriar = [];
+    const chavesJaAdicionadas = new Set();
+    orcamentosParaImportar.forEach(o => {
+      if (o.equipamento_novo && o.equipamento_chave && !chavesJaAdicionadas.has(o.equipamento_chave)) {
+        equipamentosParaCriar.push(o.equipamento_novo);
+        chavesJaAdicionadas.add(o.equipamento_chave);
+      }
+    });
+    const mapaChaveParaId = {};
+    if (equipamentosParaCriar.length > 0) {
+      const { data: criados, error: erroEquip } = await supabaseClient
+        .from('equipamentos').insert(equipamentosParaCriar).select('id, cliente_id, numero_serie');
+      if (erroEquip) throw erroEquip;
+      criados.forEach(e => { mapaChaveParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id; });
+    }
+
+    // 2. Monta os registros de OS (upsert por numero_os — atualiza se já existe, cria se não existe)
+    // Pra cada numero_os, mantém o maior valor/dados mais completos entre múltiplos orçamentos do mesmo número
+    const osPorNumero = {};
+    orcamentosParaImportar.forEach(o => {
+      const equipId = o.equipamento_id || (o.equipamento_chave ? mapaChaveParaId[o.equipamento_chave] : null);
+      const existente = osPorNumero[o.numero_os];
+      const registro = {
+        numero_os: o.numero_os,
+        orcamento: o.orcamento,
+        cliente_id: o.cliente_id,
+        cliente_nome_texto: o.cliente_nome_texto,
+        equipamento_id: equipId,
+        status: o.status,
+        valor: o.valor || existente?.valor || 0,
+        data_abertura: o.data_abertura || existente?.data_abertura || null,
+        descricao_defeito: o.descricao_defeito || existente?.descricao_defeito || '',
+        tecnico: o.tecnico || existente?.tecnico || '',
+      };
+      osPorNumero[o.numero_os] = registro;
+    });
+
+    const registrosOS = Object.values(osPorNumero);
+    const TAMANHO_LOTE = 500;
+    const idsPorNumeroOS = {};
+
+    for (let i = 0; i < registrosOS.length; i += TAMANHO_LOTE) {
+      const lote = registrosOS.slice(i, i + TAMANHO_LOTE);
+      const { data: resultado, error } = await supabaseClient
+        .from('ordens_servico')
+        .upsert(lote, { onConflict: 'numero_os' })
+        .select('id, numero_os');
+      if (error) throw error;
+      resultado.forEach(r => { idsPorNumeroOS[r.numero_os] = r.id; });
+    }
+
+    // 3. Insere os itens (os_pecas) de cada orçamento, ligados ao os_id correto
+    const itensParaInserir = [];
+    orcamentosParaImportar.forEach(o => {
+      const osId = idsPorNumeroOS[o.numero_os];
+      if (!osId) return;
+      o.itens.forEach(item => {
+        itensParaInserir.push({ os_id: osId, nome_peca: item.nome_peca, quantidade: item.quantidade, valor_unitario: item.valor_unitario });
+      });
+    });
+
+    for (let i = 0; i < itensParaInserir.length; i += TAMANHO_LOTE) {
+      const lote = itensParaInserir.slice(i, i + TAMANHO_LOTE);
+      const { error } = await supabaseClient.from('os_pecas').insert(lote);
+      if (error) throw error;
+    }
+
+    alert(`${registrosOS.length} OS processada(s) (criadas ou atualizadas), ${itensParaInserir.length} item(ns) de orçamento importado(s), ${equipamentosParaCriar.length} equipamento(s) novo(s) criado(s).`);
+    document.getElementById('previewImportOrcamentoCard').style.display = 'none';
+    document.getElementById('planilhaOrcamentoInput').value = '';
+    orcamentosParaImportar = [];
+    carregarOS();
+  } catch (err) {
+    alert('Erro ao importar: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar todos';
+  }
+}
+
+let clientesCache = [];
+let equipamentosCache = [];
+
+async function carregarClientesSelect() {
+  const { data } = await supabaseClient.from('clientes').select('id, nome').order('nome');
+  clientesCache = data || [];
+  const select = document.getElementById('clienteSelect');
+  select.innerHTML = '<option value="">Selecione...</option>' +
+    clientesCache.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+}
+
+async function carregarEquipamentosDoCliente() {
+  const clienteId = document.getElementById('clienteSelect').value;
+  const select = document.getElementById('equipamentoSelect');
+  if (!clienteId) {
+    select.innerHTML = '<option value="">Selecione o cliente primeiro</option>';
+    return;
+  }
+  const { data } = await supabaseClient.from('equipamentos').select('id, tipo, modelo, numero_serie').eq('cliente_id', clienteId);
+  equipamentosCache = data || [];
+  select.innerHTML = '<option value="">Selecione...</option>' +
+    equipamentosCache.map(e => `<option value="${e.id}">${e.tipo || ''} ${e.modelo || ''} (${e.numero_serie || 's/n'})</option>`).join('');
+}
+
+let frasesCache = { causa: [], defeito: [], servico: [] };
+
+async function carregarFrasesRapidas() {
+  const { data } = await supabaseClient.from('frases_rapidas').select('*').order('texto');
+  frasesCache = { causa: [], defeito: [], servico: [] };
+  (data || []).forEach(f => {
+    if (frasesCache[f.campo]) frasesCache[f.campo].push(f);
+  });
+
+  // popula o datalist de causa (autocomplete nativo do navegador)
+  const datalist = document.getElementById('listaCausas');
+  datalist.innerHTML = frasesCache.causa.map(f => `<option value="${f.texto}">`).join('');
+}
+
+const MAPA_CAIXA_SUGESTAO = { defeito: 'sugestoesDefeito', servico: 'sugestoesServico' };
+
+function mostrarSugestoes(idCampo, tipoCampo) {
+  const valor = document.getElementById(idCampo).value.trim().toLowerCase();
+  const caixaId = MAPA_CAIXA_SUGESTAO[tipoCampo];
+  const caixa = document.getElementById(caixaId);
+
+  if (!valor) { caixa.style.display = 'none'; return; }
+
+  const opcoes = (frasesCache[tipoCampo] || []).filter(f => f.texto.toLowerCase().includes(valor)).slice(0, 6);
+  if (opcoes.length === 0) { caixa.style.display = 'none'; return; }
+
+  caixa.innerHTML = opcoes.map(f => `<div class="item-sugestao" onclick="usarSugestao('${idCampo}', '${caixaId}', ${JSON.stringify(f.texto).replace(/"/g, '&quot;')})">${f.texto}</div>`).join('');
+  caixa.style.display = 'block';
+}
+
+function usarSugestao(idCampo, caixaId, texto) {
+  document.getElementById(idCampo).value = texto;
+  document.getElementById(caixaId).style.display = 'none';
+}
+
+function esconderSugestoes(caixaId) {
+  document.getElementById(caixaId).style.display = 'none';
+}
+
+function abrirGerenciadorFrases() {
+  document.getElementById('modalFrases').style.display = 'block';
+  renderizarListaFrases();
+}
+
+function renderizarListaFrases() {
+  const container = document.getElementById('listaFrasesCadastradas');
+  const nomesLabel = { causa: 'Causa', defeito: 'Descrição do Defeito', servico: 'Serviço Realizado' };
+  container.innerHTML = '';
+
+  ['causa', 'defeito', 'servico'].forEach(campo => {
+    if (frasesCache[campo].length === 0) return;
+    const titulo = document.createElement('p');
+    titulo.style.cssText = 'font-weight:bold;margin-top:12px;font-size:13px;color:#374151;';
+    titulo.textContent = nomesLabel[campo];
+    container.appendChild(titulo);
+
+    frasesCache[campo].forEach(f => {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:#f9fafb;border-radius:4px;margin-bottom:4px;font-size:13px;';
+      div.innerHTML = `<span>${f.texto}</span><button class="perigo" style="padding:2px 8px;font-size:11px;" onclick="excluirFrase('${f.id}')">X</button>`;
+      container.appendChild(div);
+    });
+  });
+
+  if (Object.values(frasesCache).every(arr => arr.length === 0)) {
+    container.innerHTML = '<p class="vazio">Nenhuma frase cadastrada ainda.</p>';
+  }
+}
+
+async function salvarNovaFrase() {
+  const campo = document.getElementById('novaFraseCampo').value;
+  const texto = document.getElementById('novaFraseTexto').value.trim();
+  if (!texto) { alert('Digite o texto da frase.'); return; }
+
+  await supabaseClient.from('frases_rapidas').insert({ campo, texto });
+  document.getElementById('novaFraseTexto').value = '';
+  await carregarFrasesRapidas();
+  renderizarListaFrases();
+}
+
+async function excluirFrase(id) {
+  await supabaseClient.from('frases_rapidas').delete().eq('id', id);
+  await carregarFrasesRapidas();
+  renderizarListaFrases();
+}
+
+let todasOSCache = [];
+
+async function carregarOS() {
+  const { data } = await supabaseClient
+    .from('ordens_servico')
+    .select('*, clientes(nome)')
+    .order('criado_em', { ascending: false });
+  todasOSCache = data || [];
+  renderizarTabelaOS(todasOSCache);
+}
+
+function renderizarTabelaOS(lista) {
+  const tbody = document.getElementById('tabelaOS');
+  tbody.innerHTML = '';
+  lista.forEach(os => {
+    const tr = document.createElement('tr');
+    const nomeCliente = os.clientes?.nome || (os.cliente_nome_texto ? `${os.cliente_nome_texto} ⚠️` : '-');
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${nomeCliente}</td>
+      <td><span class="badge ${os.status}">${os.status.replace('_',' ')}</span></td>
+      <td>${formatarData(os.data_abertura)}</td>`;
+    tr.onclick = () => abrirOS(os);
+    tbody.appendChild(tr);
+  });
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="vazio">Nenhuma OS encontrada</td></tr>';
+  }
+}
+
+function filtrarOS() {
+  const termo = document.getElementById('buscaOS').value.trim().toLowerCase();
+  if (!termo) { renderizarTabelaOS(todasOSCache); return; }
+  const filtradas = todasOSCache.filter(os =>
+    (os.numero_os || '').toLowerCase().includes(termo) ||
+    (os.clientes?.nome || '').toLowerCase().includes(termo) ||
+    (os.cliente_nome_texto || '').toLowerCase().includes(termo) ||
+    (os.status || '').toLowerCase().includes(termo)
+  );
+  renderizarTabelaOS(filtradas);
+}
+
+async function abrirOS(os) {
+  document.getElementById('tituloForm').textContent = 'Editar OS';
+  document.getElementById('osId').value = os.id;
+  document.getElementById('numeroOS').value = os.numero_os || '';
+  document.getElementById('orcamento').value = os.orcamento || '';
+  document.getElementById('status').value = os.status || 'aberta';
+  document.getElementById('descricaoDefeito').value = os.descricao_defeito || '';
+  document.getElementById('causa').value = os.causa || '';
+  document.getElementById('servicoRealizado').value = os.servico_realizado || '';
+  document.getElementById('clienteSelect').value = os.cliente_id || '';
+  await carregarEquipamentosDoCliente();
+  document.getElementById('equipamentoSelect').value = os.equipamento_id || '';
+
+  const { data: pecasUsadas } = await supabaseClient.from('os_pecas').select('*').eq('os_id', os.id);
+  document.getElementById('tabelaPecasUsadas').innerHTML = '';
+  (pecasUsadas || []).forEach(p => adicionarLinhaPeca(p.nome_peca, p.quantidade, p.valor_unitario || 0));
+
+  document.getElementById('maoDeObra').value = os.mao_de_obra || 0;
+  calcularOrcamento();
+  document.getElementById('btnImprimir').style.display = 'inline-block';
+  document.getElementById('btnOrcamento').style.display = 'inline-block';
+
+  window.scrollTo(0,0);
+}
+
+function imprimirOSAtual() {
+  const id = document.getElementById('osId').value;
+  if (!id) return;
+  window.open(`imprimir_os.html?id=${id}`, '_blank');
+}
+
+function gerarOrcamentoAtual() {
+  const id = document.getElementById('osId').value;
+  if (!id) return;
+  window.open(`orcamento.html?id=${id}`, '_blank');
+}
+
+function adicionarLinhaPeca(nome = '', quantidade = 1, valorUnitario = 0) {
+  const tbody = document.getElementById('tabelaPecasUsadas');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="peca-nome" value="${nome}" placeholder="Nome da peça" style="margin-bottom:0;" onchange="buscarPrecoPeca(this)"></td>
+    <td><input type="number" class="peca-qtd" value="${quantidade}" min="0.01" step="0.01" style="margin-bottom:0;" onchange="calcularOrcamento()"></td>
+    <td><input type="number" class="peca-valor" value="${valorUnitario}" min="0" step="0.01" style="margin-bottom:0;" onchange="calcularOrcamento()"></td>
+    <td><button type="button" class="perigo" onclick="this.closest('tr').remove(); calcularOrcamento();">X</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+// Ao digitar o nome da peça e sair do campo, busca o preço de venda cadastrado no estoque
+async function buscarPrecoPeca(inputNome) {
+  const nome = inputNome.value.trim();
+  if (!nome) return;
+  const peca = await encontrarPecaPorNome(nome);
+  if (peca && peca.preco_venda) {
+    const tr = inputNome.closest('tr');
+    tr.querySelector('.peca-valor').value = peca.preco_venda;
+  }
+  calcularOrcamento();
+}
+
+function calcularOrcamento() {
+  const linhas = document.querySelectorAll('#tabelaPecasUsadas tr');
+  let totalPecas = 0;
+  linhas.forEach(tr => {
+    const qtd = parseFloat(tr.querySelector('.peca-qtd').value) || 0;
+    const valor = parseFloat(tr.querySelector('.peca-valor').value) || 0;
+    totalPecas += qtd * valor;
+  });
+  const maoDeObra = parseFloat(document.getElementById('maoDeObra').value) || 0;
+  const total = totalPecas + maoDeObra;
+
+  document.getElementById('totalPecas').textContent = 'R$ ' + totalPecas.toFixed(2).replace('.', ',');
+  document.getElementById('totalMaoDeObra').textContent = 'R$ ' + maoDeObra.toFixed(2).replace('.', ',');
+  document.getElementById('totalOrcamento').textContent = 'R$ ' + total.toFixed(2).replace('.', ',');
+  return total;
+}
+
+function coletarPecasDoFormulario() {
+  const linhas = document.querySelectorAll('#tabelaPecasUsadas tr');
+  const pecas = [];
+  linhas.forEach(tr => {
+    const nome = tr.querySelector('.peca-nome').value.trim();
+    const qtd = parseFloat(tr.querySelector('.peca-qtd').value) || 0;
+    const valorUnitario = parseFloat(tr.querySelector('.peca-valor').value) || 0;
+    if (nome && qtd > 0) pecas.push({ nome, quantidade: qtd, valorUnitario });
+  });
+  return pecas;
+}
+
+async function salvarOS() {
+  const id = document.getElementById('osId').value;
+  const valorTotal = calcularOrcamento();
+  const registro = {
+    numero_os: document.getElementById('numeroOS').value,
+    orcamento: document.getElementById('orcamento').value,
+    cliente_id: document.getElementById('clienteSelect').value || null,
+    equipamento_id: document.getElementById('equipamentoSelect').value || null,
+    status: document.getElementById('status').value,
+    valor: valorTotal.toFixed(2),
+    mao_de_obra: parseFloat(document.getElementById('maoDeObra').value) || 0,
+    descricao_defeito: document.getElementById('descricaoDefeito').value,
+    causa: document.getElementById('causa').value,
+    servico_realizado: document.getElementById('servicoRealizado').value,
+  };
+  if (!registro.numero_os) { alert('Preencha o número da OS'); return; }
+
+  const pecasInformadas = coletarPecasDoFormulario();
+  let osIdFinal = id;
+
+  if (id) {
+    // Edição: atualiza a OS e substitui a lista de peças, SEM mexer no estoque
+    // (evita descontar duas vezes o mesmo item)
+    await supabaseClient.from('ordens_servico').update(registro).eq('id', id);
+    await supabaseClient.from('os_pecas').delete().eq('os_id', id);
+    for (const p of pecasInformadas) {
+      const pecaCasada = await encontrarPecaPorNome(p.nome);
+      await supabaseClient.from('os_pecas').insert({
+        os_id: id, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade, valor_unitario: p.valorUnitario
+      });
+    }
+    if (pecasInformadas.length > 0) {
+      alert('OS atualizada. Obs: o estoque não é ajustado automaticamente ao editar peças de uma OS já salva — se precisar corrigir, ajuste manualmente na tela Estoque.');
+    }
+  } else {
+    // OS nova: cria, registra peças E desconta do estoque
+    const { data: novaOS } = await supabaseClient.from('ordens_servico').insert(registro).select().single();
+    osIdFinal = novaOS?.id;
+    for (const p of pecasInformadas) {
+      const pecaCasada = await encontrarPecaPorNome(p.nome);
+      await supabaseClient.from('os_pecas').insert({
+        os_id: osIdFinal, peca_id: pecaCasada?.id || null, nome_peca: p.nome, quantidade: p.quantidade, valor_unitario: p.valorUnitario
+      });
+      if (pecaCasada) {
+        const novaQtdCarro = (parseFloat(pecaCasada.quantidade_carro) || 0) - p.quantidade;
+        await supabaseClient.from('pecas').update({ quantidade_carro: novaQtdCarro }).eq('id', pecaCasada.id);
+        await supabaseClient.from('movimentacoes_estoque').insert({
+          peca_id: pecaCasada.id, tipo: 'saida', quantidade: p.quantidade,
+          motivo: `OS ${registro.numero_os} (carro)`, os_id: osIdFinal
+        });
+        if (novaQtdCarro < 0) {
+          alert(`Atenção: o carro ficou com estoque negativo de "${pecaCasada.nome}" — não havia quantidade suficiente. Reabasteça o carro assim que possível.`);
+        }
+      }
+    }
+  }
+  limparForm();
+  carregarOS();
+}
+
+// Busca peça no estoque pelo nome (comparação sem diferenciar maiúsculas/minúsculas)
+async function encontrarPecaPorNome(nome) {
+  const { data } = await supabaseClient.from('pecas').select('*').ilike('nome', nome).limit(1);
+  return data && data.length ? data[0] : null;
+}
+
+function preencherServicoAutomatico() {
+  const pecas = coletarPecasDoFormulario();
+  const causa = document.getElementById('causa').value.trim();
+
+  if (pecas.length === 0) {
+    alert('Adicione peças na lista antes de gerar o texto automático.');
+    return;
+  }
+
+  const listaPecas = pecas.map(p => `${p.nome} (${p.quantidade} un)`).join(', ');
+  let texto = `Realizada substituição de: ${listaPecas}.`;
+  if (causa) texto += ` Causa identificada: ${causa}.`;
+  texto += ' Equipamento testado e aprovado após o reparo.';
+
+  document.getElementById('servicoRealizado').value = texto;
+}
+
+function limparForm() {
+  document.getElementById('tituloForm').textContent = 'Nova Ordem de Serviço';
+  document.getElementById('osId').value = '';
+  ['numeroOS','orcamento','valor','descricaoDefeito','servicoRealizado'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('status').value = 'aberta';
+  document.getElementById('causa').value = '';
+  document.getElementById('clienteSelect').value = '';
+  document.getElementById('equipamentoSelect').innerHTML = '<option value="">Selecione o cliente primeiro</option>';
+  document.getElementById('tabelaPecasUsadas').innerHTML = '';
+  document.getElementById('btnImprimir').style.display = 'none';
+  document.getElementById('btnOrcamento').style.display = 'none';
+}
+
+// Orçamento acompanha automaticamente o número da OS
+document.getElementById('numeroOS').addEventListener('input', (e) => {
+  document.getElementById('orcamento').value = e.target.value;
+});
+
+(async () => {
+  await protegerPagina();
+  await carregarClientesSelect();
+  await carregarOS();
+  await carregarFrasesRapidas();
+})();
+</script>
+</body>
+</html>
