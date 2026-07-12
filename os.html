@@ -369,45 +369,53 @@ async function processarPlanilhaOS() {
       if (!mapa.numeroOS) throw new Error('Não encontrei uma coluna de "Nº OS". Verifique o título das colunas.');
 
       let semClienteVinculado = 0;
+      let clientesNovos = 0;
       let equipamentosNovos = 0;
+      const clientesNovosMapa = {}; // chave (cnpj ou nome) -> dados do cliente a criar
+
       osParaImportar = linhas.map(linha => {
         const numeroOS = (linha[mapa.numeroOS] || '').toString().trim();
         const nomeCliente = mapa.cliente ? (linha[mapa.cliente] || '').toString().trim() : '';
         const cnpjCliente = mapa.cnpjCliente ? (linha[mapa.cnpjCliente] || '').toString().replace(/\D/g, '') : '';
+        const contato = mapa.contato ? (linha[mapa.contato] || '').toString().trim() : '';
+        const celular = mapa.celular ? (linha[mapa.celular] || '').toString().trim() : '';
+        const email = mapa.email ? (linha[mapa.email] || '').toString().trim() : '';
 
         let clienteId = clientesMapaNomes[nomeCliente.trim().toLowerCase()] || null;
         if (!clienteId && cnpjCliente.length === 14) clienteId = clientesMapaCNPJ[cnpjCliente] || null;
-        if (nomeCliente && !clienteId) semClienteVinculado++;
 
-        const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
-        let equipamentoId = null;
-        let equipamentoNovo = null;
-        if (clienteId && numeroSerie) {
-          const chave = `${clienteId}|${numeroSerie.toLowerCase()}`;
-          if (equipamentosMapaSerie[chave]) {
-            equipamentoId = equipamentosMapaSerie[chave];
-          } else {
-            equipamentoNovo = {
-              cliente_id: clienteId,
-              tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
-              marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
-              capacidade: mapa.capacidade ? (linha[mapa.capacidade] || '').toString().trim() : '',
-              numero_serie: numeroSerie,
+        let clienteChaveNovo = null;
+        if (!clienteId && (nomeCliente || cnpjCliente)) {
+          semClienteVinculado++;
+          clienteChaveNovo = cnpjCliente || nomeCliente.toLowerCase();
+          if (!clientesNovosMapa[clienteChaveNovo]) {
+            const extras = [];
+            if (contato) extras.push(`Contato: ${contato}`);
+            if (email) extras.push(`E-mail: ${email}`);
+            if (cnpjCliente) extras.push(`CNPJ: ${cnpjCliente}`);
+            clientesNovosMapa[clienteChaveNovo] = {
+              nome: nomeCliente || `CNPJ ${cnpjCliente}`,
+              empresa: cnpjCliente ? `${nomeCliente} — ${cnpjCliente}` : nomeCliente,
+              telefone: celular,
+              observacoes: extras.join(' | '),
             };
-            equipamentosMapaSerie[chave] = 'PENDENTE'; // marca como já vai ser criado, evita duplicar na mesma importação
-            equipamentosNovos++;
+            clientesNovos++;
           }
         }
+
+        const numeroSerie = mapa.numeroSerie ? (linha[mapa.numeroSerie] || '').toString().trim() : '';
 
         return {
           numero_os: numeroOS,
           orcamento: mapa.orcamento ? (linha[mapa.orcamento] || '').toString().trim() : numeroOS,
           cliente_id: clienteId,
-          cliente_nome_texto: clienteId ? null : nomeCliente,
+          cliente_chave_novo: clienteChaveNovo, // resolvido em cliente_id real na hora de confirmar
+          cliente_nome_texto: null, // não é mais necessário — agora sempre cria um cliente de verdade
           cliente_nome_planilha: nomeCliente,
-          equipamento_id: equipamentoId,
-          equipamento_novo: equipamentoNovo,
-          equipamento_chave: (clienteId && numeroSerie) ? `${clienteId}|${numeroSerie.toLowerCase()}` : null,
+          numero_serie: numeroSerie,
+          equip_tipo: mapa.produto ? (linha[mapa.produto] || '').toString().trim() : '',
+          equip_marca: mapa.marca ? (linha[mapa.marca] || '').toString().trim() : '',
+          equip_capacidade: mapa.capacidade ? (linha[mapa.capacidade] || '').toString().trim() : '',
           status: mapa.status ? normalizarStatus(linha[mapa.status]) : 'concluida',
           valor: mapa.valor ? parseFloat(linha[mapa.valor]) || 0 : 0,
           data_abertura: mapa.dataAbertura ? converterDataPlanilha(linha[mapa.dataAbertura]) : null,
@@ -419,7 +427,8 @@ async function processarPlanilhaOS() {
         };
       }).filter(os => os.numero_os);
 
-      exibirPreviewImportOS(semClienteVinculado, equipamentosNovos);
+      osParaImportar._clientesNovosMapa = clientesNovosMapa; // guarda junto pra usar na confirmação
+      exibirPreviewImportOS(semClienteVinculado, clientesNovos);
     } catch (err) {
       alert('Erro ao ler a planilha: ' + err.message);
     }
@@ -427,12 +436,12 @@ async function processarPlanilhaOS() {
   reader.readAsArrayBuffer(input.files[0]);
 }
 
-function exibirPreviewImportOS(semClienteVinculado, equipamentosNovos) {
+function exibirPreviewImportOS(semClienteVinculado, clientesNovos) {
   document.getElementById('previewImportOSCard').style.display = 'block';
   let resumo = `${osParaImportar.length} OS encontrada(s).`;
-  if (equipamentosNovos > 0) resumo += ` 🆕 ${equipamentosNovos} equipamento(s) novo(s) serão criados automaticamente.`;
+  if (clientesNovos > 0) resumo += ` 🆕 ${clientesNovos} cliente(s) novo(s) serão criados automaticamente (nome, CNPJ, telefone, contato).`;
   if (semClienteVinculado > 0) {
-    resumo += ` ⚠️ ${semClienteVinculado} não têm cliente correspondente cadastrado (serão importadas sem cliente vinculado — você pode ajustar manualmente depois).`;
+    resumo += ` (${semClienteVinculado} OS ao todo vão usar esses clientes novos.)`;
   }
   document.getElementById('resumoImportOS').textContent = resumo;
 
@@ -440,7 +449,7 @@ function exibirPreviewImportOS(semClienteVinculado, equipamentosNovos) {
   tbody.innerHTML = '';
   osParaImportar.slice(0, 500).forEach(os => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.cliente_nome_planilha || '-'}${!os.cliente_id && os.cliente_nome_planilha ? ' ⚠️' : ''}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
+    tr.innerHTML = `<td>${os.numero_os}</td><td>${os.cliente_nome_planilha || '-'}${os.cliente_chave_novo ? ' 🆕' : ''}</td><td>${os.status}</td><td>R$ ${os.valor.toFixed(2)}</td>`;
     tbody.appendChild(tr);
   });
   if (osParaImportar.length > 500) {
@@ -456,46 +465,85 @@ async function confirmarImportOS(event) {
   btn.textContent = 'Importando...';
 
   try {
-    // 1. Cria os equipamentos novos primeiro (deduplicados pela chave cliente+série)
-    const equipamentosParaCriar = [];
-    const chavesJaAdicionadas = new Set();
-    osParaImportar.forEach(os => {
-      if (os.equipamento_novo && os.equipamento_chave && !chavesJaAdicionadas.has(os.equipamento_chave)) {
-        equipamentosParaCriar.push({ chave: os.equipamento_chave, dados: os.equipamento_novo });
-        chavesJaAdicionadas.add(os.equipamento_chave);
-      }
-    });
+    const TAMANHO_LOTE = 500;
+    const clientesNovosMapa = osParaImportar._clientesNovosMapa || {};
 
-    const mapaChaveParaId = {};
-    if (equipamentosParaCriar.length > 0) {
-      const { data: criados, error: erroEquip } = await supabaseClient
-        .from('equipamentos')
-        .insert(equipamentosParaCriar.map(e => e.dados))
-        .select('id, cliente_id, numero_serie');
-      if (erroEquip) throw erroEquip;
-      criados.forEach(e => {
-        mapaChaveParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id;
-      });
+    // 1. Cria os clientes novos primeiro (deduplicados por CNPJ ou nome)
+    const chavesClientes = Object.keys(clientesNovosMapa);
+    const mapaChaveParaClienteId = {};
+    if (chavesClientes.length > 0) {
+      const clientesParaCriar = chavesClientes.map(chave => clientesNovosMapa[chave]);
+      for (let i = 0; i < clientesParaCriar.length; i += TAMANHO_LOTE) {
+        const lote = clientesParaCriar.slice(i, i + TAMANHO_LOTE);
+        const loteChaves = chavesClientes.slice(i, i + TAMANHO_LOTE);
+        const { data: criados, error: erroCliente } = await supabaseClient
+          .from('clientes').insert(lote).select('id');
+        if (erroCliente) throw erroCliente;
+        criados.forEach((c, idx) => { mapaChaveParaClienteId[loteChaves[idx]] = c.id; });
+      }
     }
 
-    // 2. Monta os registros finais de OS, já com equipamento_id resolvido
-    const registros = osParaImportar.map(os => {
-      const { cliente_nome_planilha, equipamento_novo, equipamento_chave, ...resto } = os;
-      if (!resto.equipamento_id && equipamento_chave && mapaChaveParaId[equipamento_chave]) {
-        resto.equipamento_id = mapaChaveParaId[equipamento_chave];
+    // 2. Resolve o cliente_id de cada OS (já existia OU acabou de ser criado)
+    osParaImportar.forEach(os => {
+      if (!os.cliente_id && os.cliente_chave_novo) {
+        os.cliente_id = mapaChaveParaClienteId[os.cliente_chave_novo] || null;
       }
-      return resto;
     });
 
-    // 3. Insere em lotes de 500 (evita payload gigante numa importação de milhares de linhas)
-    const TAMANHO_LOTE = 500;
+    // 3. Cria os equipamentos novos (deduplicados pela chave cliente+série), agora que todo cliente_id existe
+    const equipamentosParaCriar = [];
+    const chavesEquipJaAdicionadas = new Set();
+    osParaImportar.forEach(os => {
+      if (os.cliente_id && os.numero_serie) {
+        const chave = `${os.cliente_id}|${os.numero_serie.toLowerCase()}`;
+        if (!equipamentosMapaSerie[chave] && !chavesEquipJaAdicionadas.has(chave)) {
+          equipamentosParaCriar.push({
+            chave,
+            dados: { cliente_id: os.cliente_id, tipo: os.equip_tipo, marca: os.equip_marca, capacidade: os.equip_capacidade, numero_serie: os.numero_serie }
+          });
+          chavesEquipJaAdicionadas.add(chave);
+        }
+      }
+    });
+
+    const mapaChaveEquipParaId = {};
+    for (let i = 0; i < equipamentosParaCriar.length; i += TAMANHO_LOTE) {
+      const lote = equipamentosParaCriar.slice(i, i + TAMANHO_LOTE);
+      const { data: criados, error: erroEquip } = await supabaseClient
+        .from('equipamentos').insert(lote.map(e => e.dados)).select('id, cliente_id, numero_serie');
+      if (erroEquip) throw erroEquip;
+      criados.forEach(e => { mapaChaveEquipParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id; });
+    }
+
+    // 4. Monta os registros finais de OS, já com cliente_id e equipamento_id resolvidos
+    const registros = osParaImportar.map(os => {
+      const chaveEquip = (os.cliente_id && os.numero_serie) ? `${os.cliente_id}|${os.numero_serie.toLowerCase()}` : null;
+      const equipamentoId = chaveEquip ? (equipamentosMapaSerie[chaveEquip] || mapaChaveEquipParaId[chaveEquip] || null) : null;
+      return {
+        numero_os: os.numero_os,
+        orcamento: os.orcamento,
+        cliente_id: os.cliente_id,
+        cliente_nome_texto: os.cliente_nome_texto,
+        equipamento_id: equipamentoId,
+        status: os.status,
+        valor: os.valor,
+        data_abertura: os.data_abertura,
+        data_conclusao: os.data_conclusao,
+        descricao_defeito: os.descricao_defeito,
+        causa: os.causa,
+        servico_realizado: os.servico_realizado,
+        tecnico: os.tecnico,
+      };
+    });
+
+    // 5. Insere as OS em lotes
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
       const lote = registros.slice(i, i + TAMANHO_LOTE);
       const { error } = await supabaseClient.from('ordens_servico').insert(lote);
       if (error) throw error;
     }
 
-    alert(`${registros.length} OS importada(s) com sucesso! ${equipamentosParaCriar.length} equipamento(s) novo(s) criado(s).`);
+    alert(`${registros.length} OS importada(s)! ${chavesClientes.length} cliente(s) novo(s) e ${equipamentosParaCriar.length} equipamento(s) novo(s) criados automaticamente.`);
     document.getElementById('previewImportOSCard').style.display = 'none';
     document.getElementById('planilhaOSInput').value = '';
     osParaImportar = [];
