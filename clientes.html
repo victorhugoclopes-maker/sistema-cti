@@ -59,6 +59,15 @@
     </div>
 
     <div class="card">
+      <h2>🔧 Limpar Equipamentos Duplicados</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
+        Procura equipamentos com o mesmo número de série repetido no mesmo cliente (comum quando a mesma OS foi importada de fontes diferentes) e remove as cópias, mantendo só um.
+      </p>
+      <button onclick="verificarEquipamentosDuplicados()">Verificar Duplicados</button>
+      <div id="resultadoDuplicados" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
       <h2>⚠️ Zona de Perigo</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
         Remove clientes criados <b>automaticamente</b> por uma importação de OS que não achou vínculo (ficam marcados por dentro). Não mexe nos clientes que você importou/cadastrou manualmente.
@@ -328,6 +337,66 @@ async function corrigirNomesComCNPJ() {
   carregarClientes();
 }
 
+async function verificarEquipamentosDuplicados() {
+  const resultado = document.getElementById('resultadoDuplicados');
+  resultado.innerHTML = '<p style="color:#9ca3af;">Verificando...</p>';
+
+  const { data: todosEquip } = await supabaseClient.from('equipamentos').select('id, cliente_id, numero_serie, tipo, marca, criado_em').order('criado_em');
+
+  const grupos = {};
+  (todosEquip || []).forEach(e => {
+    if (!e.numero_serie) return;
+    const chave = `${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`;
+    if (!grupos[chave]) grupos[chave] = [];
+    grupos[chave].push(e);
+  });
+
+  const duplicados = Object.values(grupos).filter(g => g.length > 1);
+  const totalExtras = duplicados.reduce((soma, g) => soma + (g.length - 1), 0);
+
+  if (duplicados.length === 0) {
+    resultado.innerHTML = '<p class="vazio">Nenhum equipamento duplicado encontrado.</p>';
+    return;
+  }
+
+  resultado.innerHTML = `
+    <p style="margin-bottom:10px;">Encontrei <b>${duplicados.length}</b> equipamento(s) com duplicata — ${totalExtras} cópia(s) extra(s) no total (mantendo sempre a mais antiga de cada grupo).</p>
+    <button class="perigo" onclick="removerEquipamentosDuplicados()">🗑️ Remover ${totalExtras} duplicata(s)</button>
+  `;
+  window._gruposDuplicados = duplicados;
+}
+
+async function removerEquipamentosDuplicados() {
+  const duplicados = window._gruposDuplicados || [];
+  if (duplicados.length === 0) return;
+
+  const idsParaRemover = [];
+  duplicados.forEach(grupo => {
+    // mantém o primeiro (mais antigo, já que veio ordenado por criado_em), remove o resto
+    grupo.slice(1).forEach(e => idsParaRemover.push(e.id));
+  });
+
+  const confirmar = confirm(`Isso vai remover ${idsParaRemover.length} equipamento(s) duplicado(s). As OS que apontavam pra eles continuam intactas (ficam vinculadas ao que restar). Confirma?`);
+  if (!confirmar) return;
+
+  // atualiza as OS que apontavam pro equipamento duplicado, pra apontar pro que vai ficar
+  for (const grupo of duplicados) {
+    const manter = grupo[0];
+    const remover = grupo.slice(1);
+    for (const eq of remover) {
+      await supabaseClient.from('ordens_servico').update({ equipamento_id: manter.id }).eq('equipamento_id', eq.id);
+    }
+  }
+
+  const { error } = await supabaseClient.from('equipamentos').delete().in('id', idsParaRemover);
+  if (error) {
+    alert('Erro ao remover: ' + error.message);
+    return;
+  }
+  alert(`${idsParaRemover.length} equipamento(s) duplicado(s) removido(s).`);
+  document.getElementById('resultadoDuplicados').innerHTML = '';
+}
+
 async function iniciarRemocaoClientesAutoOS() {
   const { data: candidatos } = await supabaseClient.from('clientes').select('id').ilike('observacoes', '%[AUTO-OS]%');
   const total = candidatos?.length || 0;
@@ -455,7 +524,17 @@ async function carregarTimelineCliente(clienteId, nomeCliente) {
       tipo: 'Venda', numero: v.numero_venda, data: v.data_venda, valor: v.valor_total,
       detalhe: v.numero_nf ? `NF ${v.numero_nf}` : 'sem NF ainda'
     })),
-  ].filter(e => e.data).sort((a, b) => b.data.localeCompare(a.data));
+  ];
+
+  // ordena pelo número (mais confiável que a data, já que muitas OS antigas não têm data preenchida)
+  eventos.sort((a, b) => {
+    const numA = parseInt(a.numero, 10);
+    const numB = parseInt(b.numero, 10);
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+    if (!isNaN(numA)) return -1;
+    if (!isNaN(numB)) return 1;
+    return String(a.numero).localeCompare(String(b.numero));
+  });
 
   container.innerHTML = '';
   if (eventos.length === 0) {
@@ -465,7 +544,7 @@ async function carregarTimelineCliente(clienteId, nomeCliente) {
   eventos.forEach(ev => {
     const div = document.createElement('div');
     div.style.cssText = 'border-left:3px solid #2563eb;padding:8px 12px;margin-bottom:8px;background:#f9fafb;border-radius:4px;';
-    div.innerHTML = `<b>${ev.tipo} ${ev.numero}</b> — ${formatarData(ev.data)} — R$ ${Number(ev.valor || 0).toFixed(2)}<br>
+    div.innerHTML = `<b>${ev.tipo} ${ev.numero}</b> — ${ev.data ? formatarData(ev.data) : 'sem data'} — R$ ${Number(ev.valor || 0).toFixed(2)}<br>
       <span style="font-size:12px;color:#6b7280;">${ev.detalhe}</span>`;
     container.appendChild(div);
   });

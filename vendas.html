@@ -62,7 +62,9 @@
         </div>
         <div>
           <label>Cliente</label>
-          <select id="clienteSelect"><option value="">Selecione...</option></select>
+          <input type="text" id="clienteBusca" list="listaClientesDatalist" placeholder="Digite o nome do cliente..." oninput="selecionarClientePorTexto()" autocomplete="off">
+          <datalist id="listaClientesDatalist"></datalist>
+          <select id="clienteSelect" style="display:none;"><option value="">Selecione...</option></select>
         </div>
         <div><label>Data</label><input type="date" id="dataVenda"></div>
         <div><label>Nº da Nota Fiscal (preencher depois de emitir no Sebrae)</label><input id="numeroNF" placeholder="Opcional"></div>
@@ -97,7 +99,20 @@
 
     <div class="card">
       <h2>Vendas Registradas</h2>
-      <input type="text" id="buscaVenda" placeholder="🔍 Buscar por nº venda, cliente, empresa ou NF..." oninput="filtrarVendas()" style="margin-bottom:14px;">
+      <input type="text" id="buscaVenda" placeholder="🔍 Buscar por nº venda, cliente, empresa ou NF..." oninput="filtrarVendas()" style="margin-bottom:10px;">
+      <div class="form-grid" style="margin-bottom:10px;">
+        <div><label>Ano</label>
+          <select id="filtroAnoVenda" onchange="filtrarVendas()">
+            <option value="">Todos os anos</option>
+          </select>
+        </div>
+        <div><label>Ordenar por data</label>
+          <select id="ordemVenda" onchange="filtrarVendas()">
+            <option value="crescente">Mais antiga primeiro</option>
+            <option value="decrescente">Mais recente primeiro</option>
+          </select>
+        </div>
+      </div>
       <table>
         <thead><tr><th>Nº Venda</th><th>Empresa</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Nº NF</th></tr></thead>
         <tbody id="tabelaVendas"></tbody>
@@ -245,12 +260,41 @@ async function carregarEmpresasSelectVendas() {
     empresasCacheVendas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('');
 }
 
+let clientesTextoParaId = {};
+
 async function carregarClientesSelectVendas() {
-  const { data } = await supabaseClient.from('clientes').select('id, nome').order('nome');
+  const { data } = await supabaseClient.from('clientes').select('id, nome, empresa').order('nome');
   clientesCacheVendas = data || [];
+
+  const contagemNomes = {};
+  clientesCacheVendas.forEach(c => { contagemNomes[c.nome] = (contagemNomes[c.nome] || 0) + 1; });
+
+  clientesTextoParaId = {};
+  const opcoes = clientesCacheVendas.map(c => {
+    let texto = c.nome;
+    if (contagemNomes[c.nome] > 1 && c.empresa) texto = `${c.nome} (${c.empresa})`;
+    clientesTextoParaId[texto] = c.id;
+    return texto;
+  });
+  document.getElementById('listaClientesDatalist').innerHTML = opcoes.map(t => `<option value="${t.replace(/"/g, '&quot;')}">`).join('');
+
   const select = document.getElementById('clienteSelect');
   select.innerHTML = '<option value="">Selecione...</option>' +
     clientesCacheVendas.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+}
+
+function selecionarClientePorTexto() {
+  const texto = document.getElementById('clienteBusca').value;
+  const id = clientesTextoParaId[texto];
+  document.getElementById('clienteSelect').value = id || '';
+}
+
+function preencherBuscaClientePorId(clienteId) {
+  const cliente = clientesCacheVendas.find(c => c.id === clienteId);
+  const busca = document.getElementById('clienteBusca');
+  if (!cliente) { busca.value = ''; return; }
+  const textoEncontrado = Object.keys(clientesTextoParaId).find(t => clientesTextoParaId[t] === clienteId);
+  busca.value = textoEncontrado || cliente.nome;
 }
 
 function adicionarLinhaItem(nome = '', quantidade = 1, valorUnitario = 0) {
@@ -370,7 +414,16 @@ let todasVendasCache = [];
 async function carregarVendas() {
   const { data } = await supabaseClient.from('vendas').select('*, clientes(nome), empresas(nome)').order('criado_em', { ascending: false });
   todasVendasCache = data || [];
-  renderizarTabelaVendas(todasVendasCache);
+  popularFiltroAnoVenda();
+  filtrarVendas();
+}
+
+function popularFiltroAnoVenda() {
+  const anos = [...new Set(todasVendasCache.map(v => v.data_venda ? v.data_venda.slice(0, 4) : null).filter(Boolean))].sort((a, b) => b - a);
+  const select = document.getElementById('filtroAnoVenda');
+  const valorAtual = select.value;
+  select.innerHTML = '<option value="">Todos os anos</option>' + anos.map(a => `<option value="${a}">${a}</option>`).join('');
+  select.value = valorAtual;
 }
 
 function renderizarTabelaVendas(lista) {
@@ -390,13 +443,24 @@ function renderizarTabelaVendas(lista) {
 
 function filtrarVendas() {
   const termo = document.getElementById('buscaVenda').value.trim().toLowerCase();
-  if (!termo) { renderizarTabelaVendas(todasVendasCache); return; }
-  const filtradas = todasVendasCache.filter(v =>
-    (v.numero_venda || '').toLowerCase().includes(termo) ||
-    (v.clientes?.nome || '').toLowerCase().includes(termo) ||
-    (v.empresas?.nome || '').toLowerCase().includes(termo) ||
-    (v.numero_nf || '').toLowerCase().includes(termo)
+  const ano = document.getElementById('filtroAnoVenda').value;
+  const ordem = document.getElementById('ordemVenda').value;
+
+  let filtradas = todasVendasCache.filter(v =>
+    (!termo ||
+      (v.numero_venda || '').toLowerCase().includes(termo) ||
+      (v.clientes?.nome || '').toLowerCase().includes(termo) ||
+      (v.empresas?.nome || '').toLowerCase().includes(termo) ||
+      (v.numero_nf || '').toLowerCase().includes(termo)
+    ) && (!ano || (v.data_venda && v.data_venda.startsWith(ano)))
   );
+
+  filtradas = filtradas.slice().sort((a, b) => {
+    const dataA = a.data_venda || '0000-00-00';
+    const dataB = b.data_venda || '0000-00-00';
+    return ordem === 'crescente' ? dataA.localeCompare(dataB) : dataB.localeCompare(dataA);
+  });
+
   renderizarTabelaVendas(filtradas);
 }
 
@@ -405,6 +469,7 @@ async function abrirVenda(v) {
   document.getElementById('numeroVenda').value = v.numero_venda || '';
   document.getElementById('empresaSelect').value = v.empresa_id || '';
   document.getElementById('clienteSelect').value = v.cliente_id || '';
+  preencherBuscaClientePorId(v.cliente_id || '');
   document.getElementById('dataVenda').value = v.data_venda || '';
   document.getElementById('numeroNF').value = v.numero_nf || '';
   document.getElementById('observacoesVenda').value = v.observacoes || '';
@@ -421,6 +486,7 @@ function limparFormVenda() {
   document.getElementById('numeroVenda').value = '';
   document.getElementById('empresaSelect').value = '';
   document.getElementById('clienteSelect').value = '';
+  document.getElementById('clienteBusca').value = '';
   document.getElementById('dataVenda').value = '';
   document.getElementById('numeroNF').value = '';
   document.getElementById('observacoesVenda').value = '';
