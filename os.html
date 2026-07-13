@@ -89,7 +89,7 @@
       <h2 id="tituloForm">Nova Ordem de Serviço</h2>
       <input type="hidden" id="osId">
       <div class="form-grid">
-        <div><label>Nº da OS</label><input id="numeroOS"></div>
+        <div><label>Nº da OS (sugerido automaticamente, pode editar)</label><input id="numeroOS"></div>
         <div><label>Orçamento (igual ao Nº OS)</label><input id="orcamento"></div>
         <div>
           <label>Cliente</label>
@@ -679,7 +679,7 @@ async function processarPlanilhaOrcamento() {
     }
   });
 
-  const { data: todasOS } = await supabaseClient.from('ordens_servico').select('id, numero_os, cliente_id, equipamento_id');
+  const { data: todasOS } = await supabaseClient.from('ordens_servico').select('id, numero_os, cliente_id, equipamento_id, status');
   const mapaOSPorNumero = {};
   (todasOS || []).forEach(os => { mapaOSPorNumero[os.numero_os.trim()] = os; });
 
@@ -765,7 +765,7 @@ async function processarPlanilhaOrcamento() {
           equipamento_chave: equipamentoChave,
           ja_existe: !!osExistente,
           os_id_existente: osExistente?.id || null,
-          status: 'concluida',
+          status: osExistente?.status || 'concluida',
           valor: mapa.total ? parseFloat(linha[mapa.total]) || 0 : 0,
           data_abertura: mapa.data ? converterDataPlanilha(linha[mapa.data]) : null,
           descricao_defeito: mapa.defeito ? (linha[mapa.defeito] || '').toString().trim() : '',
@@ -835,10 +835,10 @@ async function confirmarImportOrcamento(event) {
       const registro = {
         numero_os: o.numero_os,
         orcamento: o.orcamento,
-        cliente_id: o.cliente_id,
-        cliente_nome_texto: o.cliente_nome_texto,
-        equipamento_id: equipId,
-        status: o.status,
+        cliente_id: o.cliente_id || existente?.cliente_id || null,
+        cliente_nome_texto: (o.cliente_id || existente?.cliente_id) ? null : (o.cliente_nome_texto || existente?.cliente_nome_texto || null),
+        equipamento_id: equipId || existente?.equipamento_id || null,
+        status: o.status || existente?.status || 'concluida',
         valor: o.valor || existente?.valor || 0,
         data_abertura: o.data_abertura || existente?.data_abertura || null,
         descricao_defeito: o.descricao_defeito || existente?.descricao_defeito || '',
@@ -1257,10 +1257,20 @@ function preencherServicoAutomatico() {
   document.getElementById('servicoRealizado').value = texto;
 }
 
+function calcularProximoNumeroOS() {
+  const numeros = todasOSCache
+    .map(os => parseInt(os.numero_os, 10))
+    .filter(n => !isNaN(n));
+  if (numeros.length === 0) return '';
+  return String(Math.max(...numeros) + 1);
+}
+
 function limparForm() {
   document.getElementById('tituloForm').textContent = 'Nova Ordem de Serviço';
   document.getElementById('osId').value = '';
-  ['numeroOS','orcamento','valor','descricaoDefeito','servicoRealizado'].forEach(id => document.getElementById(id).value = '');
+  ['orcamento','valor','descricaoDefeito','servicoRealizado'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('numeroOS').value = calcularProximoNumeroOS();
+  document.getElementById('orcamento').value = document.getElementById('numeroOS').value;
   document.getElementById('status').value = 'aberta';
   document.getElementById('causa').value = '';
   document.getElementById('clienteSelect').value = '';
@@ -1280,6 +1290,8 @@ document.getElementById('numeroOS').addEventListener('input', (e) => {
   await carregarClientesSelect();
   await carregarOS();
   await carregarFrasesRapidas();
+  document.getElementById('numeroOS').value = calcularProximoNumeroOS();
+  document.getElementById('orcamento').value = document.getElementById('numeroOS').value;
 })();
 </script>
 </body>

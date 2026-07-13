@@ -51,6 +51,13 @@
       </div>
     </div>
 
+    <div class="card" id="cardCorrigirNomes" style="display:none;">
+      <h2>🔧 Corrigir Nomes de Clientes</h2>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:12px;" id="resumoCorrigirNomes"></p>
+      <button onclick="corrigirNomesComCNPJ()">Buscar nomes reais pelo CNPJ</button>
+      <p id="progressoCorrigirNomes" style="font-size:13px;color:#6b7280;margin-top:8px;"></p>
+    </div>
+
     <div class="card">
       <h2>⚠️ Zona de Perigo</h2>
       <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">
@@ -264,6 +271,63 @@ async function confirmarImportClientes() {
   carregarClientes();
 }
 
+// Detecta clientes cujo nome ficou como "CNPJ 12345..." (não achou nome na hora da importação)
+function detectarClientesComCNPJComoNome() {
+  return todosClientesCache.filter(c => /^CNPJ \d{14}$/.test((c.nome || '').trim()));
+}
+
+function verificarClientesParaCorrigir() {
+  const candidatos = detectarClientesComCNPJComoNome();
+  const card = document.getElementById('cardCorrigirNomes');
+  if (candidatos.length > 0) {
+    card.style.display = 'block';
+    document.getElementById('resumoCorrigirNomes').textContent =
+      `Encontrei ${candidatos.length} cliente(s) com o CNPJ no lugar do nome. Clique no botão pra buscar o nome real na Receita Federal.`;
+  } else {
+    card.style.display = 'none';
+  }
+}
+
+async function buscarNomeEmpresaPorCNPJCliente(cnpj) {
+  try {
+    const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
+    if (!resp.ok) return null;
+    const dados = await resp.json();
+    return dados.nome_fantasia || dados.razao_social || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function corrigirNomesComCNPJ() {
+  const candidatos = detectarClientesComCNPJComoNome();
+  if (candidatos.length === 0) return;
+
+  const statusEl = document.getElementById('progressoCorrigirNomes');
+  let corrigidos = 0, naoAchados = 0;
+
+  for (let i = 0; i < candidatos.length; i++) {
+    const cliente = candidatos[i];
+    const cnpj = cliente.nome.replace('CNPJ ', '').trim();
+    statusEl.textContent = `Buscando ${i + 1} de ${candidatos.length}...`;
+
+    const nomeReal = await buscarNomeEmpresaPorCNPJCliente(cnpj);
+    if (nomeReal) {
+      await supabaseClient.from('clientes').update({
+        nome: nomeReal,
+        empresa: `${nomeReal} — ${cnpj}`,
+      }).eq('id', cliente.id);
+      corrigidos++;
+    } else {
+      naoAchados++;
+    }
+    await new Promise(r => setTimeout(r, 400));
+  }
+
+  statusEl.textContent = `Concluído! ${corrigidos} nome(s) corrigido(s), ${naoAchados} não encontrado(s) na Receita.`;
+  carregarClientes();
+}
+
 async function iniciarRemocaoClientesAutoOS() {
   const { data: candidatos } = await supabaseClient.from('clientes').select('id').ilike('observacoes', '%[AUTO-OS]%');
   const total = candidatos?.length || 0;
@@ -321,6 +385,7 @@ async function carregarClientes() {
   const { data } = await supabaseClient.from('clientes').select('*, equipamentos(id)').order('nome');
   todosClientesCache = data || [];
   renderizarTabelaClientes(todosClientesCache);
+  verificarClientesParaCorrigir();
 }
 
 function renderizarTabelaClientes(lista) {
