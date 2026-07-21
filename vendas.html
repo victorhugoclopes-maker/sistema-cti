@@ -499,6 +499,16 @@ function limparFormVenda() {
   await carregarEmpresasSelectVendas();
   await carregarClientesSelectVendas();
   await carregarVendas();
+
+  const params = new URLSearchParams(window.location.search);
+  const idParaAbrir = params.get('abrir');
+  if (idParaAbrir) {
+    const vendaEncontrada = todasVendasCache.find(v => v.id === idParaAbrir);
+    if (vendaEncontrada) {
+      await abrirVenda(vendaEncontrada);
+      document.querySelector('h2').scrollIntoView({ behavior: 'smooth' });
+    }
+  }
 })();
 </script>
 </body>

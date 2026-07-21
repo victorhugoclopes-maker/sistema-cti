@@ -41,6 +41,24 @@
       <button onclick="gerarRelatorio()">Gerar Relatório</button>
     </div>
 
+    <div class="card">
+      <h2>Comparar Vários Meses</h2>
+      <div class="form-grid">
+        <div><label>Comparar quantos meses (a partir do selecionado acima, indo pra trás)</label>
+          <select id="qtdMesesComparar">
+            <option value="3">3 meses</option>
+            <option value="6" selected>6 meses</option>
+            <option value="12">12 meses</option>
+          </select>
+        </div>
+      </div>
+      <button onclick="compararMeses()">Comparar</button>
+      <table style="margin-top:14px;" id="tabelaComparacao" style="display:none;">
+        <thead><tr><th>Mês</th><th>OS Concluídas</th><th>Vendas</th><th>Total Geral</th></tr></thead>
+        <tbody id="corpoTabelaComparacao"></tbody>
+      </table>
+    </div>
+
     <div id="resultadoRelatorio" style="display:none;">
       <div class="card">
         <h2>Faturamento do Período</h2>
@@ -80,6 +98,15 @@
     </div>
   </div>
 
+<div id="modalMovimentoCliente" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:100;">
+  <div style="background:white;max-width:600px;margin:60px auto;padding:20px;border-radius:8px;max-height:70vh;overflow-y:auto;">
+    <h2 id="tituloModalMovimento">Movimento</h2>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">Clique num item pra abrir.</p>
+    <div id="listaModalMovimento"></div>
+    <button class="secundario" onclick="document.getElementById('modalMovimentoCliente').style.display='none'" style="margin-top:14px;">Fechar</button>
+  </div>
+</div>
+
 <script src="js/config.js"></script>
 <script>
 function moeda(v) { return 'R$ ' + Number(v || 0).toFixed(2).replace('.', ','); }
@@ -96,7 +123,7 @@ async function gerarRelatorio() {
   // OS concluídas no período
   const { data: osPeriodo } = await supabaseClient
     .from('ordens_servico')
-    .select('valor, cliente_id, clientes(nome), status, data_abertura')
+    .select('id, numero_os, valor, cliente_id, clientes(nome), status, data_abertura')
     .gte('data_abertura', inicio).lte('data_abertura', fim);
 
   const osConcluidas = (osPeriodo || []).filter(os => os.status === 'concluida');
@@ -106,7 +133,7 @@ async function gerarRelatorio() {
   // Vendas no período
   const { data: vendasPeriodo } = await supabaseClient
     .from('vendas')
-    .select('valor_total, cliente_id, clientes(nome), empresa_id, empresas(nome), data_venda')
+    .select('id, numero_venda, valor_total, cliente_id, clientes(nome), empresa_id, empresas(nome), data_venda')
     .gte('data_venda', inicio).lte('data_venda', fim);
 
   const totalVendas = (vendasPeriodo || []).reduce((soma, v) => soma + (parseFloat(v.valor_total) || 0), 0);
@@ -183,13 +210,15 @@ async function gerarRelatorio() {
   const clientesContagem = {};
   (osPeriodo || []).forEach(os => {
     const nome = os.clientes?.nome || 'Sem cliente';
-    if (!clientesContagem[nome]) clientesContagem[nome] = { os: 0, vendas: 0 };
+    if (!clientesContagem[nome]) clientesContagem[nome] = { os: 0, vendas: 0, listaOS: [], listaVendas: [] };
     clientesContagem[nome].os++;
+    clientesContagem[nome].listaOS.push(os);
   });
   (vendasPeriodo || []).forEach(v => {
     const nome = v.clientes?.nome || 'Sem cliente';
-    if (!clientesContagem[nome]) clientesContagem[nome] = { os: 0, vendas: 0 };
+    if (!clientesContagem[nome]) clientesContagem[nome] = { os: 0, vendas: 0, listaOS: [], listaVendas: [] };
     clientesContagem[nome].vendas++;
+    clientesContagem[nome].listaVendas.push(v);
   });
   const rankingClientes = Object.entries(clientesContagem)
     .sort((a, b) => (b[1].os + b[1].vendas) - (a[1].os + a[1].vendas)).slice(0, 10);
@@ -197,12 +226,94 @@ async function gerarRelatorio() {
   tbodyClientes.innerHTML = '';
   rankingClientes.forEach(([nome, dados]) => {
     const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
     tr.innerHTML = `<td>${nome}</td><td>${dados.os}</td><td>${dados.vendas}</td>`;
+    tr.onclick = () => abrirModalMovimentoCliente(nome, dados);
     tbodyClientes.appendChild(tr);
   });
   if (rankingClientes.length === 0) {
     tbodyClientes.innerHTML = '<tr><td colspan="3" class="vazio">Nenhum movimento no período</td></tr>';
   }
+}
+
+function abrirModalMovimentoCliente(nome, dados) {
+  document.getElementById('tituloModalMovimento').textContent = `Movimento de ${nome}`;
+  const container = document.getElementById('listaModalMovimento');
+  container.innerHTML = '';
+
+  dados.listaOS.forEach(os => {
+    const div = document.createElement('div');
+    div.style.cssText = 'border-left:3px solid #2563eb;padding:8px 12px;margin-bottom:8px;background:#f9fafb;border-radius:4px;cursor:pointer;';
+    div.innerHTML = `<b>OS ${os.numero_os}</b> — <span class="badge ${os.status}">${os.status.replace('_',' ')}</span> — R$ ${Number(os.valor || 0).toFixed(2)}`;
+    div.onclick = () => window.location.href = `os.html?abrir=${os.id}`;
+    container.appendChild(div);
+  });
+  dados.listaVendas.forEach(v => {
+    const div = document.createElement('div');
+    div.style.cssText = 'border-left:3px solid #16a34a;padding:8px 12px;margin-bottom:8px;background:#f9fafb;border-radius:4px;cursor:pointer;';
+    div.innerHTML = `<b>Venda ${v.numero_venda}</b> — R$ ${Number(v.valor_total || 0).toFixed(2)}`;
+    div.onclick = () => window.location.href = `vendas.html?abrir=${v.id}`;
+    container.appendChild(div);
+  });
+
+  if (dados.listaOS.length === 0 && dados.listaVendas.length === 0) {
+    container.innerHTML = '<p class="vazio">Nenhum registro encontrado.</p>';
+  }
+
+  document.getElementById('modalMovimentoCliente').style.display = 'block';
+}
+
+async function calcularTotaisDoMes(mes, ano) {
+  const inicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const fim = `${ano}-${String(mes).padStart(2,'0')}-${ultimoDia}`;
+
+  const { data: os } = await supabaseClient
+    .from('ordens_servico').select('valor, status')
+    .gte('data_abertura', inicio).lte('data_abertura', fim);
+  const totalOS = (os || []).filter(o => o.status === 'concluida').reduce((s, o) => s + (parseFloat(o.valor) || 0), 0);
+
+  const { data: vendas } = await supabaseClient
+    .from('vendas').select('valor_total')
+    .gte('data_venda', inicio).lte('data_venda', fim);
+  const totalVendas = (vendas || []).reduce((s, v) => s + (parseFloat(v.valor_total) || 0), 0);
+
+  return { totalOS, totalVendas };
+}
+
+const NOMES_MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+async function compararMeses() {
+  const mesBase = parseInt(document.getElementById('filtroMes').value);
+  const anoBase = parseInt(document.getElementById('filtroAno').value);
+  const qtd = parseInt(document.getElementById('qtdMesesComparar').value);
+
+  const tabela = document.getElementById('tabelaComparacao');
+  const corpo = document.getElementById('corpoTabelaComparacao');
+  tabela.style.display = 'table';
+  corpo.innerHTML = '<tr><td colspan="4" class="vazio">Calculando...</td></tr>';
+
+  const meses = [];
+  for (let i = qtd - 1; i >= 0; i--) {
+    let mes = mesBase - i;
+    let ano = anoBase;
+    while (mes <= 0) { mes += 12; ano -= 1; }
+    meses.push({ mes, ano });
+  }
+
+  const resultados = [];
+  for (const { mes, ano } of meses) {
+    const totais = await calcularTotaisDoMes(mes, ano);
+    resultados.push({ mes, ano, ...totais });
+  }
+
+  corpo.innerHTML = '';
+  resultados.forEach(r => {
+    const tr = document.createElement('tr');
+    const total = r.totalOS + r.totalVendas;
+    tr.innerHTML = `<td>${NOMES_MESES[r.mes - 1]}/${r.ano}</td><td>${moeda(r.totalOS)}</td><td>${moeda(r.totalVendas)}</td><td><b>${moeda(total)}</b></td>`;
+    corpo.appendChild(tr);
+  });
 }
 
 (async () => {

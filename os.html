@@ -1345,6 +1345,17 @@ document.getElementById('numeroOS').addEventListener('input', (e) => {
   await carregarFrasesRapidas();
   document.getElementById('numeroOS').value = calcularProximoNumeroOS();
   document.getElementById('orcamento').value = document.getElementById('numeroOS').value;
+
+  const params = new URLSearchParams(window.location.search);
+  const idParaAbrir = params.get('abrir');
+  if (idParaAbrir) {
+    const osEncontrada = todasOSCache.find(os => os.id === idParaAbrir);
+    if (osEncontrada) {
+      await abrirOS(osEncontrada);
+      // rola até o formulário
+      document.getElementById('tituloForm').scrollIntoView({ behavior: 'smooth' });
+    }
+  }
 })();
 </script>
 </body>
