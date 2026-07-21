@@ -308,29 +308,65 @@ async function buscarNomeEmpresaPorCNPJCliente(cnpj) {
   }
 }
 
+// Impede sair da página sem querer no meio de um processo demorado (a busca de CNPJ, por exemplo)
+let processoEmAndamento = false;
+
+window.addEventListener('beforeunload', (e) => {
+  if (processoEmAndamento) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+function bloquearMenuDuranteProcesso(bloquear) {
+  document.querySelectorAll('.topbar nav a').forEach(link => {
+    if (bloquear) {
+      link.dataset.hrefOriginal = link.getAttribute('href');
+      link.removeAttribute('href');
+      link.style.opacity = '0.4';
+      link.style.pointerEvents = 'none';
+      link.title = 'Aguarde o processo terminar antes de sair da página';
+    } else {
+      if (link.dataset.hrefOriginal) link.setAttribute('href', link.dataset.hrefOriginal);
+      link.style.opacity = '';
+      link.style.pointerEvents = '';
+      link.title = '';
+    }
+  });
+}
+
 async function corrigirNomesComCNPJ() {
   const candidatos = detectarClientesComCNPJComoNome();
   if (candidatos.length === 0) return;
 
+  processoEmAndamento = true;
+  bloquearMenuDuranteProcesso(true);
+
   const statusEl = document.getElementById('progressoCorrigirNomes');
+  statusEl.innerHTML = '⚠️ <b>Não saia nem feche essa página até terminar</b> — o menu fica travado até acabar.';
   let corrigidos = 0, naoAchados = 0;
 
-  for (let i = 0; i < candidatos.length; i++) {
-    const cliente = candidatos[i];
-    const cnpj = cliente.nome.replace('CNPJ ', '').trim();
-    statusEl.textContent = `Buscando ${i + 1} de ${candidatos.length}...`;
+  try {
+    for (let i = 0; i < candidatos.length; i++) {
+      const cliente = candidatos[i];
+      const cnpj = cliente.nome.replace('CNPJ ', '').trim();
+      statusEl.innerHTML = `⚠️ <b>Não saia nem feche essa página até terminar.</b><br>Buscando ${i + 1} de ${candidatos.length}...`;
 
-    const nomeReal = await buscarNomeEmpresaPorCNPJCliente(cnpj);
-    if (nomeReal) {
-      await supabaseClient.from('clientes').update({
-        nome: nomeReal,
-        empresa: `${nomeReal} — ${cnpj}`,
-      }).eq('id', cliente.id);
-      corrigidos++;
-    } else {
-      naoAchados++;
+      const nomeReal = await buscarNomeEmpresaPorCNPJCliente(cnpj);
+      if (nomeReal) {
+        await supabaseClient.from('clientes').update({
+          nome: nomeReal,
+          empresa: `${nomeReal} — ${cnpj}`,
+        }).eq('id', cliente.id);
+        corrigidos++;
+      } else {
+        naoAchados++;
+      }
+      await new Promise(r => setTimeout(r, 400));
     }
-    await new Promise(r => setTimeout(r, 400));
+  } finally {
+    processoEmAndamento = false;
+    bloquearMenuDuranteProcesso(false);
   }
 
   statusEl.textContent = `Concluído! ${corrigidos} nome(s) corrigido(s), ${naoAchados} não encontrado(s) na Receita.`;

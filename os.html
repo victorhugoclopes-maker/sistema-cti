@@ -366,27 +366,55 @@ async function buscarNomeEmpresaPorCNPJ(cnpj) {
 }
 
 // Pra cada cliente novo sem nome (só tinha CNPJ), tenta descobrir o nome de verdade
+let processoEmAndamento = false;
+window.addEventListener('beforeunload', (e) => {
+  if (processoEmAndamento) { e.preventDefault(); e.returnValue = ''; }
+});
+function bloquearMenuDuranteProcesso(bloquear) {
+  document.querySelectorAll('.topbar nav a').forEach(link => {
+    if (bloquear) {
+      link.dataset.hrefOriginal = link.getAttribute('href');
+      link.removeAttribute('href');
+      link.style.opacity = '0.4';
+      link.style.pointerEvents = 'none';
+      link.title = 'Aguarde o processo terminar antes de sair da página';
+    } else {
+      if (link.dataset.hrefOriginal) link.setAttribute('href', link.dataset.hrefOriginal);
+      link.style.opacity = '';
+      link.style.pointerEvents = '';
+      link.title = '';
+    }
+  });
+}
+
 async function enriquecerClientesSemNome(clientesNovosMapa) {
   const chavesSemNome = Object.keys(clientesNovosMapa).filter(chave =>
     clientesNovosMapa[chave].nome.startsWith('CNPJ ') && /^\d{14}$/.test(chave)
   );
   if (chavesSemNome.length === 0) return;
 
+  processoEmAndamento = true;
+  bloquearMenuDuranteProcesso(true);
   const statusEl = document.getElementById('progressoBuscaCNPJ');
-  for (let i = 0; i < chavesSemNome.length; i++) {
-    const chave = chavesSemNome[i];
-    if (statusEl) statusEl.textContent = `Buscando nome de empresas pelo CNPJ... (${i + 1}/${chavesSemNome.length})`;
-    const nomeReal = await buscarNomeEmpresaPorCNPJ(chave);
-    if (nomeReal) {
-      clientesNovosMapa[chave].nome = nomeReal;
-      clientesNovosMapa[chave].empresa = `${nomeReal} — ${chave}`;
-    } else {
-      // não achou na Receita — usa o nome da pessoa de contato como alternativa (melhor que mostrar só o CNPJ)
-      const match = (clientesNovosMapa[chave].observacoes || '').match(/Contato: ([^|]+)/);
-      if (match) clientesNovosMapa[chave].nome = match[1].trim();
+  try {
+    for (let i = 0; i < chavesSemNome.length; i++) {
+      const chave = chavesSemNome[i];
+      if (statusEl) statusEl.innerHTML = `⚠️ <b>Não saia nem feche essa página até terminar.</b><br>Buscando nome de empresas pelo CNPJ... (${i + 1}/${chavesSemNome.length})`;
+      const nomeReal = await buscarNomeEmpresaPorCNPJ(chave);
+      if (nomeReal) {
+        clientesNovosMapa[chave].nome = nomeReal;
+        clientesNovosMapa[chave].empresa = `${nomeReal} — ${chave}`;
+      } else {
+        // não achou na Receita — usa o nome da pessoa de contato como alternativa (melhor que mostrar só o CNPJ)
+        const match = (clientesNovosMapa[chave].observacoes || '').match(/Contato: ([^|]+)/);
+        if (match) clientesNovosMapa[chave].nome = match[1].trim();
+      }
+      // pausa entre chamadas pra respeitar o limite da API gratuita
+      await new Promise(r => setTimeout(r, 400));
     }
-    // pausa entre chamadas pra respeitar o limite da API gratuita
-    await new Promise(r => setTimeout(r, 400));
+  } finally {
+    processoEmAndamento = false;
+    bloquearMenuDuranteProcesso(false);
   }
   if (statusEl) statusEl.textContent = '';
 }
