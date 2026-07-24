@@ -614,35 +614,49 @@ async function confirmarImportOS(event) {
       criados.forEach(e => { mapaChaveEquipParaId[`${e.cliente_id}|${e.numero_serie.trim().toLowerCase()}`] = e.id; });
     }
 
-    // 4. Monta os registros finais de OS, já com cliente_id e equipamento_id resolvidos
+    // 4. Busca OS já existentes com esses números (pra atualizar em vez de duplicar/travar)
+    const numerosOS = osParaImportar.map(os => os.numero_os);
+    const mapaOSExistentes = {};
+    for (let i = 0; i < numerosOS.length; i += TAMANHO_LOTE) {
+      const lote = numerosOS.slice(i, i + TAMANHO_LOTE);
+      const { data: existentes } = await supabaseClient
+        .from('ordens_servico').select('numero_os, cliente_id, equipamento_id, orcamento, status, valor, data_abertura, data_conclusao, descricao_defeito, causa, servico_realizado, tecnico')
+        .in('numero_os', lote);
+      (existentes || []).forEach(e => { mapaOSExistentes[e.numero_os] = e; });
+    }
+    const qtdAtualizadas = Object.keys(mapaOSExistentes).length;
+    const qtdNovas = osParaImportar.length - qtdAtualizadas;
+
+    // 5. Monta os registros finais de OS — preenche o que tiver de novo, mantém o que já existia se a planilha não trouxer nada melhor
     const registros = osParaImportar.map(os => {
       const chaveEquip = (os.cliente_id && os.numero_serie) ? `${os.cliente_id}|${os.numero_serie.toLowerCase()}` : null;
       const equipamentoId = chaveEquip ? (equipamentosMapaSerie[chaveEquip] || mapaChaveEquipParaId[chaveEquip] || null) : null;
+      const existente = mapaOSExistentes[os.numero_os];
       return {
         numero_os: os.numero_os,
-        orcamento: os.orcamento,
-        cliente_id: os.cliente_id,
-        cliente_nome_texto: os.cliente_nome_texto,
-        equipamento_id: equipamentoId,
-        status: os.status,
-        valor: os.valor,
-        data_abertura: os.data_abertura,
-        data_conclusao: os.data_conclusao,
-        descricao_defeito: os.descricao_defeito,
-        causa: os.causa,
-        servico_realizado: os.servico_realizado,
-        tecnico: os.tecnico,
+        orcamento: os.orcamento || existente?.orcamento || os.numero_os,
+        cliente_id: os.cliente_id || existente?.cliente_id || null,
+        cliente_nome_texto: os.cliente_id ? null : (os.cliente_nome_texto || null),
+        equipamento_id: equipamentoId || existente?.equipamento_id || null,
+        status: existente?.status || os.status,
+        valor: os.valor || existente?.valor || 0,
+        data_abertura: os.data_abertura || existente?.data_abertura || null,
+        data_conclusao: os.data_conclusao || existente?.data_conclusao || null,
+        descricao_defeito: os.descricao_defeito || existente?.descricao_defeito || '',
+        causa: os.causa || existente?.causa || '',
+        servico_realizado: os.servico_realizado || existente?.servico_realizado || '',
+        tecnico: os.tecnico || existente?.tecnico || '',
       };
     });
 
-    // 5. Insere as OS em lotes
+    // 6. Upsert em lotes — atualiza se o número de OS já existe, cria se não existe
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
       const lote = registros.slice(i, i + TAMANHO_LOTE);
-      const { error } = await supabaseClient.from('ordens_servico').insert(lote);
+      const { error } = await supabaseClient.from('ordens_servico').upsert(lote, { onConflict: 'numero_os' });
       if (error) throw error;
     }
 
-    alert(`${registros.length} OS importada(s)! ${chavesClientes.length} cliente(s) novo(s) e ${equipamentosParaCriar.length} equipamento(s) novo(s) criados automaticamente.`);
+    alert(`${qtdNovas} OS nova(s) criada(s), ${qtdAtualizadas} OS existente(s) atualizada(s) com dados melhores. ${chavesClientes.length} cliente(s) novo(s) e ${equipamentosParaCriar.length} equipamento(s) novo(s) criados automaticamente.`);
     document.getElementById('previewImportOSCard').style.display = 'none';
     document.getElementById('planilhaOSInput').value = '';
     osParaImportar = [];
